@@ -618,12 +618,14 @@ dpdk_load_module(void)
 		0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, /* 20 */
 		0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, /* 30 */
 		0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, /* 40 */
-		0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, /* 50 */
-		0x05, 0x05  /* 60 - 8 */
+		//0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, 0x05, /* 50 */     // MLX-JING
+		//0x05, 0x05  /* 60 - 8 */
 	};
 
 	port_conf.rx_adv_conf.rss_conf.rss_key = (uint8_t *)&key;
 	port_conf.rx_adv_conf.rss_conf.rss_key_len = sizeof(key);
+    printf("@@@@@@@@@JING port_conf.rx_adv_conf.rss_conf.rss_key_len = %d\n", port_conf.rx_adv_conf.rss_conf.rss_key_len);
+
 
 	if (!CONFIG.multi_process || (CONFIG.multi_process && CONFIG.multi_process_is_master)) {
 		for (rxlcore_id = 0; rxlcore_id < CONFIG.num_cores; rxlcore_id++) {
@@ -684,6 +686,8 @@ dpdk_load_module(void)
 			/* check port capabilities */
 			rte_eth_dev_info_get(portid, &dev_info[portid]);
 
+            printf("@@@@@@@@@JING rte.table size %d, rss_key_len=%d\n", dev_info[portid].reta_size, dev_info[portid].hash_key_size);
+
 			for (rxlcore_id = 0; rxlcore_id < CONFIG.num_cores; rxlcore_id++) {
 				ret = rte_eth_rx_queue_setup(portid, rxlcore_id, nb_rxd,
 							     rte_eth_dev_socket_id(portid), &rx_conf,
@@ -693,6 +697,13 @@ dpdk_load_module(void)
 						 "rte_eth_rx_queue_setup:err=%d, port=%u, queueid: %d\n",
 						 ret, (unsigned) portid, rxlcore_id);
 			}
+
+            /* MLX-Jing*/
+            ret = rte_eth_dev_rss_hash_update(portid, &port_conf.rx_adv_conf.rss_conf);
+            if (ret < 0) {
+                 rte_exit(EXIT_FAILURE, "Cannot configure device rss key: err=%d, port=%u\n", ret, (unsigned) portid);
+            }
+            /**********/
 
 			/* init one TX queue on each port per CPU (this is redundant for this app) */
 			fflush(stdout);
