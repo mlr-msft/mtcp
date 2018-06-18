@@ -28,7 +28,9 @@
 
 // network functions
 int libos_mtcp_queue(int domain, int type, int protocol){
-	printf("@@@@@@@@@JINGLIU:libos_mtcp_queue@@@@@@@@@\n");
+#ifdef LIBOS_MTCP_DEBUG
+	printf("@@@@@@@@@JINGLIU:libos_mtcp_queue()@@@@@@@@@\n");
+#endif
     return 0;
 }
 int libos_mtcp_listen(int qd, int backlog){
@@ -56,7 +58,7 @@ int libos_mtcp_pop(int qd, zeus_sgarray *sga){
     //if return 0, then already ready and in sga
     return 0;
 }
-ssize_t libost_mtpc_wait(int *qts, size_t num_qts){
+ssize_t libos_mtcp_wait(int *qts, size_t num_qts){
     return 0;
 }
 ssize_t libos_mtcp_wait_all(int *qts, size_t num_qts){
