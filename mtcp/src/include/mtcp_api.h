@@ -15,6 +15,9 @@
 
 /*******************************************/
 // LIBOS
+//
+//#define LIBOS_MTCP_DEBUG 7
+//
 
 #ifndef C_MAX_QUEUE_DEPTH
 #define C_MAX_QUEUE_DEPTH 40
@@ -189,7 +192,7 @@ int libos_mtcp_close(int qd);
 // other functions
 int libos_mtcp_push(int qd, zeus_sgarray *sga);
 int libos_mtcp_pop(int qd, zeus_sgarray *sga);
-ssize_t libost_mtpc_wait(int *qts, size_t num_qts);
+ssize_t libos_mtcp_wait(int *qts, size_t num_qts);
 ssize_t libos_mtcp_wait_all(int *qts, size_t num_qts);
 ssize_t libos_mtcp_blocking_push(int qd, zeus_sgarray *sga);
 ssize_t libos_mtcp_blocking_pop(int qd, zeus_sgarray *sga);
