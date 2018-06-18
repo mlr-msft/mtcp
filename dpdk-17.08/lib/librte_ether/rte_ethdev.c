@@ -141,13 +141,16 @@ enum {
 uint8_t
 rte_eth_find_next(uint8_t port_id)
 {
+	RTE_LOG(INFO, EAL, "JINGLIU: rte_eth_find_next :%d\n", port_id);
 	while (port_id < RTE_MAX_ETHPORTS &&
 	       rte_eth_devices[port_id].state != RTE_ETH_DEV_ATTACHED)
 		port_id++;
 
+	RTE_LOG(INFO, EAL, "JINGLIU: rte_eth_find_next middle :%d\n", port_id);
 	if (port_id >= RTE_MAX_ETHPORTS)
 		return RTE_MAX_ETHPORTS;
 
+	RTE_LOG(INFO, EAL, "JINGLIU: rte_eth_find_next result:%d\n", port_id);
 	return port_id;
 }
 
@@ -310,9 +313,11 @@ rte_eth_dev_count(void)
 
 	count = 0;
 
-	RTE_ETH_FOREACH_DEV(p)
+	RTE_ETH_FOREACH_DEV(p){
+        RTE_LOG(INFO, EAL, "JINGLIU: count++\n");
 		count++;
-
+    }
+    RTE_LOG(INFO, EAL, "JINGLIU: rte_eth_dev_count (%d)\n", count);
 	return count;
 }
 

@@ -600,8 +600,10 @@ ParseConfiguration(char *line)
 		}
 	} else if (strcmp(p, "port") == 0) {
 		if(strncmp(q, ALL_STRING, sizeof(ALL_STRING)) == 0) {
+            printf("JINGLIU:SetInterfaceInfo for q:%s\n", q);
 			SetInterfaceInfo(q);
 		} else {
+            printf("JINGLIU:SetInterfaceInfo\n");
 			SetInterfaceInfo(line + strlen(p) + 1);
 		}
 	} else if (strcmp(p, "io") == 0) {

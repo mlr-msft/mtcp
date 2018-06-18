@@ -227,6 +227,7 @@ SetInterfaceInfo(char* dev_name_list)
 			rte_exit(EXIT_FAILURE, "Invalid EAL args!\n");
 		/* give me the count of 'detected' ethernet ports */
 		num_devices = rte_eth_dev_count();
+        printf("JINGLIU: num_devices:%d MAX:%d\n", num_devices, RTE_MAX_ETHPORTS);
 		if (num_devices == 0) {
 			rte_exit(EXIT_FAILURE, "No Ethernet port!\n");
 		}
