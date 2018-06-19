@@ -58,6 +58,7 @@
 
 #define GBPS(bytes) (bytes * 8.0 / (1000 * 1000 * 1000))
 
+
 /*----------------------------------------------------------------------------*/
 /* handlers for threads */
 struct mtcp_thread_context *g_pctx[MAX_CPUS] = {0};
@@ -1449,6 +1450,10 @@ mtcp_setconf(const struct mtcp_conf *conf)
 
 	return 0;
 }
+
+
+
+
 /*----------------------------------------------------------------------------*/
 int 
 mtcp_init(const char *config_file)

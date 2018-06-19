@@ -13,8 +13,12 @@
 #define INPORT_ANY	(uint16_t)0
 #endif
 
+
 /*******************************************/
 // LIBOS
+//
+//#define LIBOS_MTCP_DEBUG 7
+//
 
 #ifndef C_MAX_QUEUE_DEPTH
 #define C_MAX_QUEUE_DEPTH 40
@@ -179,6 +183,8 @@ mtcp_writev(mctx_t mctx, int sockid, const struct iovec *iov, int numIOV);
 
 // typedef int qtoken
 
+int libos_mtcp_init(const char * config_file, void *app_start_rountine);
+
 // network functions
 int libos_mtcp_queue(int domain, int type, int protocol);
 int libos_mtcp_listen(int qd, int backlog);
@@ -189,7 +195,7 @@ int libos_mtcp_close(int qd);
 // other functions
 int libos_mtcp_push(int qd, zeus_sgarray *sga);
 int libos_mtcp_pop(int qd, zeus_sgarray *sga);
-ssize_t libost_mtpc_wait(int *qts, size_t num_qts);
+ssize_t libos_mtcp_wait(int *qts, size_t num_qts);
 ssize_t libos_mtcp_wait_all(int *qts, size_t num_qts);
 ssize_t libos_mtcp_blocking_push(int qd, zeus_sgarray *sga);
 ssize_t libos_mtcp_blocking_pop(int qd, zeus_sgarray *sga);
