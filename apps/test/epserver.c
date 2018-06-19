@@ -70,21 +70,18 @@ printHelp(const char *prog_name)
 int 
 main(int argc, char **argv)
 {
-	DIR *dir;
-	struct dirent *ent;
-	int fd;
+	//int fd;
 	int ret;
-	uint64_t total_read;
 	struct mtcp_conf mcfg;
 	int process_cpu;
 	int  o;  	// return value of getopt()
 	int num_cores;
-	int backlog;
+	int backlog = 4096;
 	int core_limit;
 	char *conf_file = NULL;
 	struct sockaddr_in saddr;
 
-	num_cores = GetNumCPUs();
+    num_cores = 1;
 	core_limit = num_cores;
 
 	if (argc < 2) {
@@ -95,14 +92,7 @@ main(int argc, char **argv)
 	while (-1 != (o = getopt(argc, argv, "N:f:p:c:b:h"))) {
 		switch (o) {
 		case 'p':
-			/* open the directory to serve */
-			www_main = optarg;
-			dir = opendir(www_main);
-			if (!dir) {
-				TRACE_CONFIG("Failed to open %s.\n", www_main);
-				perror("opendir");
-				return FALSE;
-			}
+            // do nothing
 			break;
 		case 'N':
 			core_limit = mystrtol(optarg, 10);
@@ -140,7 +130,7 @@ main(int argc, char **argv)
 	}
 	
 
-	}
+	//}
 	/* initialize mtcp */
 	if (conf_file == NULL) {
 		TRACE_CONFIG("You forgot to pass the mTCP startup config file!\n");
@@ -150,7 +140,7 @@ main(int argc, char **argv)
     ret = libos_mtcp_init(conf_file);
 	// TODO: check return value of libos_mtcp_init
 	// libos will init the event for me
-	int listen_qd = libos_mtcp_queue(AF_INET, SOCK_STERM, 0);
+	int listen_qd = libos_mtcp_queue(AF_INET, SOCK_STREAM, 0);
 	if(listen_qd < 0){
 		TRACE_ERROR("Failed to call libot_mtcp_queue()\n");
 		return -1;
@@ -170,29 +160,25 @@ main(int argc, char **argv)
 		TRACE_ERROR("Failed to call libos_mtcp_listen()\n");
 		return -1;
 	}
-
-	int i = 0;
-	while(i < 3){
-		// do 3 accept() at max
-		while(1){
-			sleep(1);
-			zeus_sgarray zsga;
-			int pop_ret = libos_mtcp_pop(listen_qd, &zsga);
-			if (pop_ret < 0){
-				continue;
-			}
-			int child_qd = libos_mtcp_accept(listen_qd, (struct sockaddr *)&saddr, sizeof(struct sockaddr));
-			// do read
-			// TODO: JL: clean the sag
-			// TODO: JL: I think clean the data structure should be made as a common rountine
-			// or even a interface (for application)
-			while (ret = libos_mtcp_pop(child_qd, &zsga) >= 0) {
-				// read until nothing to read
-			}
-			break;
-		}
-		i--;
-	}
+    // do single accept()
+    while(1){
+        sleep(1);
+        zeus_sgarray zsga;
+        int pop_ret = libos_mtcp_pop(listen_qd, &zsga);
+        if (pop_ret < 0){
+            continue;
+        }
+        int child_qd = libos_mtcp_accept(listen_qd, NULL, NULL);
+        // do read
+        // TODO: JL: clean the sag
+        // TODO: JL: I think clean the data structure should be made as a common rountine
+        // or even a interface (for application)
+        while ((ret = libos_mtcp_pop(child_qd, &zsga)) >= 0) {
+            // read until nothing to read
+            printf("NON\n");
+        }
+        break;
+    }
 
 	return 0;
 }
