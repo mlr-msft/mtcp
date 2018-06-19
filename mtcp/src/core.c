@@ -58,6 +58,7 @@
 
 #define GBPS(bytes) (bytes * 8.0 / (1000 * 1000 * 1000))
 
+
 /*----------------------------------------------------------------------------*/
 /* handlers for threads */
 struct mtcp_thread_context *g_pctx[MAX_CPUS] = {0};
@@ -1450,83 +1451,8 @@ mtcp_setconf(const struct mtcp_conf *conf)
 	return 0;
 }
 
-int libos_mtcp_init(){
-	int i;
-	int ret;
-
-	if (geteuid()) {
-		TRACE_CONFIG("[CAUTION] Run the app as root!\n");
-		exit(EXIT_FAILURE);
-	}
-
-	/* getting cpu and NIC */
-	/* set to max cpus only if user has not arbitrarily set it to lower # */
-    // JINGLIU:
-    // Now, eimply assume run on single cpu
-    // TODO: add multi-core support here
-	num_cpus = 1;
-			
-	assert(num_cpus >= 1);
-
-	if (num_cpus > MAX_CPUS) {
-		TRACE_ERROR("You cannot run mTCP with more than %d cores due "
-			    "to your static mTCP configuration. Please disable "
-			    "the last %d cores in your system.\n",
-			    MAX_CPUS, num_cpus - MAX_CPUS);
-		exit(EXIT_FAILURE);
-	}
 
 
-	for (i = 0; i < num_cpus; i++) {
-		g_mtcp[i] = NULL;
-		running[i] = FALSE;
-		sigint_cnt[i] = 0;
-	}
-
-	//ret = LoadConfiguration(config_file);
-	if (ret) {
-		TRACE_CONFIG("Error occured while loading configuration.\n");
-		return -1;
-	}
-	PrintConfiguration();
-
-	for (i = 0; i < CONFIG.eths_num; i++) {
-		ap[i] = CreateAddressPool(CONFIG.eths[i].ip_addr, 1);
-		if (!ap[i]) {
-			TRACE_CONFIG("Error occured while create address pool[%d]\n",
-				     i);
-			return -1;
-		}
-	}
-	
-	PrintInterfaceInfo();
-
-	ret = SetRoutingTable();
-	if (ret) {
-		TRACE_CONFIG("Error occured while loading routing table.\n");
-		return -1;
-	}
-	PrintRoutingTable();
-
-	LoadARPTable();
-	PrintARPTable();
-
-	if (signal(SIGUSR1, HandleSignal) == SIG_ERR) {
-		perror("signal, SIGUSR1");
-		return -1;
-	}
-	if (signal(SIGINT, HandleSignal) == SIG_ERR) {
-		perror("signal, SIGINT");
-		return -1;
-	}
-	app_signal_handler = NULL;
-
-	/* load system-wide io module specs */
-	current_iomodule_func->load_module();
-
-	return 0;
-
-}
 
 /*----------------------------------------------------------------------------*/
 int 
