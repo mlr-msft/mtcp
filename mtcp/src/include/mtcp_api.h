@@ -13,6 +13,7 @@
 #define INPORT_ANY	(uint16_t)0
 #endif
 
+
 /*******************************************/
 // LIBOS
 //
@@ -181,6 +182,8 @@ mtcp_writev(mctx_t mctx, int sockid, const struct iovec *iov, int numIOV);
 /******************************************************************************/
 
 // typedef int qtoken
+
+int libos_mtcp_init(const char * config_file, void *app_start_rountine);
 
 // network functions
 int libos_mtcp_queue(int domain, int type, int protocol);
