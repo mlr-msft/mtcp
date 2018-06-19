@@ -39,14 +39,12 @@ struct libos_thread_context {
 };
 
 
-
 static int proc_done[MTCP_CPU_SUM];
 static int num_cores;
 static int core_limit;
 static pthread_t app_thread[MTCP_CPU_SUM];
 static int cores[MTCP_CPU_SUM];
 struct libos_thread_context libos_threads_ctx_list[MTCP_CPU_SUM];
-void* (*per_core_appfps[MTCP_CPU_SUM])(void);
 
 
 /******************************************************************************/
@@ -54,16 +52,17 @@ void* (*per_core_appfps[MTCP_CPU_SUM])(void);
 /******************************************************************************/
 
 
-int get_current_core_idx(){
+struct libos_thread_context *get_current_thread_context(){
+    // the the current running thread (caller)'s corresponding thread context 
     int i;
     pthread_t tid = pthread_self();
     for(i = 0; i < MTCP_CPU_SUM; i++){
         if (app_thread[i] == tid){
-            return i;
+            return libos_threads_ctx_list[i];
         }
     }
     TRACE_CONFIG("ERROR: cannot find corresponding thread context\n");
-    return -1;
+    return NULL;
 }
 
 
@@ -81,7 +80,7 @@ void libos_signal_handler(int signum) {
     }
 }
 
-void* init_mtcp_app_thread_ctx(void *arg) {
+int init_mtcp_app_thread_ctx(void *arg) {
     // TODO: another way to pass core number in
     // Assume no HT
     int core = *(int *)arg;
@@ -120,11 +119,10 @@ void* init_mtcp_app_thread_ctx(void *arg) {
         return NULL;
     }
 
-    // call the app thread rountine
-    return (*per_core_appfps[core])();
+    return 0;
 }
 
-int libos_mtcp_init(const char *config_file, void *app_start_rountine){
+int libos_mtcp_init(const char *config_file){
     int ret;
     int i;
     // running parameters
@@ -145,7 +143,6 @@ int libos_mtcp_init(const char *config_file, void *app_start_rountine){
     for(i = 0; i < core_limit; i++){
         cores[i] = i;
         proc_done[i] = FALSE;
-        per_core_appfps[i] = app_start_rountine;
         if (pthread_create(&app_thread[i], NULL, init_mtcp_app_thread_ctx, (void *)&cores[i])) {
             perror("pthread_create");
             TRACE_CONFIG("Failed to create thread.\n");
@@ -153,11 +150,7 @@ int libos_mtcp_init(const char *config_file, void *app_start_rountine){
         }
     }
 
-    for (i = 0; i < core_limit; i++) {
-        pthread_join(app_thread[i], NULL);
-    }
-    mtcp_destroy();
-    return 0;
+    return ret;
 }
 
 
@@ -168,64 +161,70 @@ int libos_mtcp_queue(int domain, int type, int protocol){
 #ifdef LIBOS_MTCP_DEBUG
 	printf("@@@@@@@@@JINGLIU:libos_mtcp_queue()@@@@@@@@@\n");
 #endif
-    int core_ctx_idx = get_current_core_idx();
-    if (core_ctx_idx < 0){
+    struct libos_thread_context *ctx = get_current_thread_context();
+    if (ctx == NULL){
         exit(EXIT_FAILURE);
     }
-    struct libos_thread_context *ctx = &libos_threads_ctx_list[core_ctx_idx];
-    listener = mtcp_socket(ctx->mctx, AF_INET, SOCK_STREAM, 0);
+    qd = mtcp_socket(ctx->mctx, AF_INET, SOCK_STREAM, 0);
     // by default, the semantics of libos is no-blocking
     ret = mtcp_setsock_nonblock(ctx->mctx, listener);
     if(ret < 0){
         TRACE_CONFIG("Failed to set noblocking");
         exit(EXIT_FAILURE);
     }
-    return listener;
+    return qid;
 }
 
 int libos_mtcp_listen(int qd, int backlog){
     int ret;
-    int core_ctx_idx = get_current_core_idx();
-    if (core_ctx_idx < 0){
-        exit(EXIT_FAILURE);
-    }
-    struct libos_thread_context *ctx = &libos_threads_ctx_list[core_ctx_idx];
+    struct mtcp_epoll_event ev;
+    struct libos_thread_context *ctx = get_current_thread_context();
     ret = mtcp_listen(ctx->mctx, qd, backlog);
+    ev.events = MTCP_EPOLLIN;
+    ev.data.sockid = qd;
+    mtcp_epoll_ctl(ctx->mctx, ctx->ep, MTCP_EPOLL_CTL_ADD, qd, &ev);
     return ret;
 
 }
 
 int libos_mtcp_bind(int qd, struct sockaddr *saddr, socklen_t size){
     int ret;
-    int core_ctx_idx = get_current_core_idx();
-    if (core_ctx_idx < 0){
-        exit(EXIT_FAILURE);
-    }
-    struct libos_thread_context *ctx = &libos_threads_ctx_list[core_ctx_idx];
+    struct libos_thread_context *ctx = get_current_thread_context();
     ret = mtcp_bind(ctx->mctx, qd, saddr, size);
     return ret;
 }
 
 int libos_mtcp_accept(int qd, struct sockaddr *saddr, socklen_t *size){
-    int core_ctx_idx = get_current_core_idx();
+    struct mtcp_epoll_event ev;
+    struct libos_thread_context *ctx = get_current_thread_context();
     int child_qd;
-    if (core_ctx_idx < 0){
-        exit(EXIT_FAILURE);
-    }
-    struct libos_thread_context *ctx = &libos_threads_ctx_list[core_ctx_idx];
     child_qd = mtcp_accept(ctx->mctx, qd, NULL, NULL);
+    if (child_qd >= 0){
+        if (child_qd >= MAX_FLOW_NUM){
+            TRACE_ERROR("Invalid socked it %d.\n", child_qd);
+            return -1;
+        }
+        ev.events = MTCP_EPOLLIN;
+        ev.data.sockid = child_qd;
+        mtcp_setsock_nonblock(ctx->mctx, child_qd);
+        mtcp_epoll_ctl(mctx, ctx->ep, MTCP_EPOLL_CTL_ADD, child_qd, &ev);
+        TRACE_APP("Socket %d register\n", child_qd);
+    }
     return child_qd;
 }
 
 int libos_mtcp_connect(int qd, struct sockaddr *saddr, socklen_t size){
     int ret;
-    int core_ctx_idx = get_current_core_idx();
     struct mtcp_epoll_event ev;
-    if (core_ctx_idx < 0){
-        exit(EXIT_FAILURE);
-    }
-    struct libos_thread_context *ctx = &libos_threads_ctx_list[core_ctx_idx];
+    struct libos_thread_context *ctx = get_current_thread_context();
     ret = mtcp_connect(ctx->mctx, qd, saddr, size);
+    if (ret < 0){
+        if (erron != EINPROGRESS){
+            perror("mtcp_connect");
+            mtcp_close(mctx, qd);
+            return -1;
+        }
+    }
     ev.events = MTCP_EPOLLOUT;
     ev.data.sockid = qd;
     mtcp_epoll_ctl(ctx->mctx, ctx->ep, MTCP_EPOLL_CTL_ADD, qd, &ev);
@@ -233,12 +232,7 @@ int libos_mtcp_connect(int qd, struct sockaddr *saddr, socklen_t size){
 }
 
 int libos_mtcp_close(int qd){
-    int core_ctx_idx = get_current_core_idx();
-    if (core_ctx_idx < 0){
-        exit(EXIT_FAILURE);
-    }
-
-    struct libos_thread_context *ctx = &libos_threads_ctx_list[core_ctx_idx];
+    struct libos_thread_context *ctx = get_current_thread_context();
     mtcp_epoll_ctl(ctx->mctx, ctx->ep, MTCP_EPOLL_CTL_DEL, qd, NULL);
     mtcp_close(ctx->mctx, qd);
     return 0;
@@ -249,25 +243,33 @@ int libos_mtcp_push(int qd, zeus_sgarray *sga){
     // if return 0, then already complete
     return 0;
 }
+
 int libos_mtcp_pop(int qd, zeus_sgarray *sga){
     //if return 0, then already ready and in sga
     return 0;
 }
-ssize_t libos_mtcp_wait(int *qts, size_t num_qts){
+
+ssize_t libos_mtcp_wait(int qt, zeus_sgarray *sga){
     return 0;
 }
-ssize_t libos_mtcp_wait_all(int *qts, size_t num_qts){
+
+ssize_t libos_mtcp_wait_any(int *qts, zeus_sgarray *sga){
+    return 0;
+}
+
+ssize_t libos_mtcp_wait_all(int *qts, zeus_sgarray *sga){
     // identical to a push, followed by a wait on the returned qtoken
     return 0;
 }
+
 ssize_t libos_mtcp_blocking_push(int qd, zeus_sgarray *sga){
     // identical to a pop, followed by a wait on the returned qtoken
     return 0;
 }
+
 ssize_t libos_mtcp_blocking_pop(int qd, zeus_sgarray *sga){
     return 0;
 }
 
-/******************************************************************************/
 /******************************************************************************/
 
