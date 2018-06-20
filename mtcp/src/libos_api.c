@@ -30,6 +30,7 @@
 
 #define MAGIC 91917171
 #define ZEUS_IO_ERR_NO (-9)
+#define MAX_EVENTS (16 * 1024)
 
 struct mtcp_pending_req {
     int qd;             // key
@@ -272,10 +273,10 @@ int libos_mtcp_push(int qd, zeus_sgarray *sga){
         req->buf_size = 0;
         req->req_done = FALSE;
     }
-	////////////////////////////
-	// C & P from libos-posix, let's see if anything wrong
-	count = mtcp_write(ctx->mctx, qd, (char *) &magic, sizeof(uint64_t)/sizeof(char));
-	if ((size_t)count < sizeof(uint64_t)) {
+    ////////////////////////////
+    // C & P from libos-posix, let's see if anything wrong
+    count = mtcp_write(ctx->mctx, qd, (char *) &magic, sizeof(uint64_t)/sizeof(char));
+    if ((size_t)count < sizeof(uint64_t)) {
         fprintf(stderr, "Could not ::write magic\n");
         return -1;
     }
@@ -288,7 +289,7 @@ int libos_mtcp_push(int qd, zeus_sgarray *sga){
 	totalLen += sizeof(num);
     req->buf_size = totalLen;
 	count = mtcp_write(ctx->mctx, qd, (char *)&totalLen, sizeof(uint64_t)/sizeof(char));
-	if (count < 0 || (size_t)count < sizeof(uint64_t)) {
+    if (count < 0 || (size_t)count < sizeof(uint64_t)) {
         fprintf(stderr, "Could not ::write total length\n");
         return -1;
     }
@@ -297,7 +298,7 @@ int libos_mtcp_push(int qd, zeus_sgarray *sga){
         fprintf(stderr, "Could not ::write sga entries\n");
         return -1;
     }
-	for (int i = 0; i < sga->num_bufs; i++) {
+    for (int i = 0; i < sga->num_bufs; i++) {
         if((sga->bufs[i]).len > MTCP_SNDBUF_SIZE){
             fprintf(stderr, "writing unit should be less than %d, real len is %lu", MTCP_SNDBUF_SIZE, (sga->bufs[i]).len);
             return -1;
@@ -421,8 +422,7 @@ int libos_mtcp_pop(int qd, zeus_sgarray *sga){
         ptr += ((sga->bufs)[i]).len;
         total += ((sga->bufs)[i]).len;
     }
-
-	req->buf = NULL;
+    req->buf = NULL;
     req->buf_size = 0;
     req->req_done = TRUE;
     req->res = total;
@@ -433,8 +433,13 @@ ssize_t libos_mtcp_wait(int qt, zeus_sgarray *sga){
     return 0;
 }
 
-ssize_t libos_mtcp_wait_any(int *qts, zeus_sgarray *sga){
-    return 0;
+ssize_t libos_mtcp_wait_any(int *qts, int qsum, zeus_sgarray *sga){
+    int numevents;
+    struct mtcp_epoll_event *events;
+    struct libos_thread_context *ctx = get_current_thread_context();
+    events = (struct mtcp_epoll_event *)calloc(MAX_EVENTS, sizeof(struct mtcp_epoll_event));
+    numevents = mtcp_epoll_queue_wait(ctx->mctx, ctx->ep, events, MAX_EVENTS, -1, qts, qsum);
+    return numevents;
 }
 
 ssize_t libos_mtcp_wait_all(int *qts, zeus_sgarray *sga){

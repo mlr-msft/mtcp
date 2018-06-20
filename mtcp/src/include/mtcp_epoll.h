@@ -58,6 +58,11 @@ int
 mtcp_epoll_wait(mctx_t mctx, int epid, 
 		struct mtcp_epoll_event *events, int maxevents, int timeout);
 /*----------------------------------------------------------------------------*/
+int 
+mtcp_epoll_queue_wait(mctx_t mctx, int epid, 
+		struct mtcp_epoll_event *events, int maxevents, int timeout, int *dqs, int qsum);
+/*----------------------------------------------------------------------------*/
+
 char * 
 EventToString(uint32_t event);
 /*----------------------------------------------------------------------------*/
