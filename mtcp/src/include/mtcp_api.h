@@ -209,7 +209,7 @@ int libos_mtcp_push(int qd, zeus_sgarray *sga);
 int libos_mtcp_pop(int qd, zeus_sgarray *sga);
 ssize_t libos_mtcp_wait(int qd, zeus_sgarray *sga);
 ssize_t libos_mtcp_wait_any(int *qts,int qsum, zeus_sgarray *sga);
-ssize_t libos_mtcp_wait_all(int *qts, zeus_sgarray *sga);
+ssize_t libos_mtcp_wait_all(int *qts, int qsum, zeus_sgarray *sga);
 ssize_t libos_mtcp_blocking_push(int qd, zeus_sgarray *sga);
 ssize_t libos_mtcp_blocking_pop(int qd, zeus_sgarray *sga);
 

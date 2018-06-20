@@ -547,7 +547,7 @@ int qd_valid(int query_qd, int *qds, int qsum){
 }
 
 int
-mtcp_epoll_queue_wait(mctx_t mctx, int epid, struct mtcp_epoll_event *events, int maxevents, int timeout, int *qds, int qsum){
+mtcp_epoll_queue_wait(mctx_t mctx, int epid, struct mtcp_epoll_event *events, int maxevents, int timeout, int *qds, int qsum, int wait_all){
     mtcp_manager_t mtcp;
 	struct mtcp_epoll *ep;
 	struct event_queue *eq;

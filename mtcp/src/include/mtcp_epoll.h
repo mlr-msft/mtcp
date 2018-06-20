@@ -60,7 +60,7 @@ mtcp_epoll_wait(mctx_t mctx, int epid,
 /*----------------------------------------------------------------------------*/
 int 
 mtcp_epoll_queue_wait(mctx_t mctx, int epid, 
-		struct mtcp_epoll_event *events, int maxevents, int timeout, int *dqs, int qsum);
+		struct mtcp_epoll_event *events, int maxevents, int timeout, int *dqs, int qsum, int wait_all);
 /*----------------------------------------------------------------------------*/
 
 char * 

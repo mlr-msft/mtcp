@@ -430,7 +430,10 @@ int libos_mtcp_pop(int qd, zeus_sgarray *sga){
 }
 
 ssize_t libos_mtcp_wait(int qt, zeus_sgarray *sga){
-    return 0;
+    int qts[1] = {qt};
+    int numevents;
+    numevents = libos_mtcp_wait_any(qts, 1, sga);
+    return numevents;
 }
 
 ssize_t libos_mtcp_wait_any(int *qts, int qsum, zeus_sgarray *sga){
@@ -438,12 +441,18 @@ ssize_t libos_mtcp_wait_any(int *qts, int qsum, zeus_sgarray *sga){
     struct mtcp_epoll_event *events;
     struct libos_thread_context *ctx = get_current_thread_context();
     events = (struct mtcp_epoll_event *)calloc(MAX_EVENTS, sizeof(struct mtcp_epoll_event));
-    numevents = mtcp_epoll_queue_wait(ctx->mctx, ctx->ep, events, MAX_EVENTS, -1, qts, qsum);
+    numevents = mtcp_epoll_queue_wait(ctx->mctx, ctx->ep, events, MAX_EVENTS, -1, qts, qsum, FALSE);
     return numevents;
 }
 
-ssize_t libos_mtcp_wait_all(int *qts, zeus_sgarray *sga){
+ssize_t libos_mtcp_wait_all(int *qts, int qsum, zeus_sgarray *sga){
     // identical to a push, followed by a wait on the returned qtoken
+    int numevents;
+    struct mtcp_epoll_event *events;
+    struct libos_thread_context *ctx = get_current_thread_context();
+    events = (struct mtcp_epoll_event *)calloc(MAX_EVENTS, sizeof(struct mtcp_epoll_event));
+    numevents = mtcp_epoll_queue_wait(ctx->mctx, ctx->ep, events, MAX_EVENTS, -1, qts, qsum, TRUE);
+    return numevents;
     return 0;
 }
 
