@@ -45,6 +45,9 @@ typedef struct mtcp_context *mctx_t;
 int 
 mtcp_init(const char *config_file);
 
+int
+mtcp_test(int val);
+
 void 
 mtcp_destroy();
 

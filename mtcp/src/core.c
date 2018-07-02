@@ -1533,6 +1533,11 @@ mtcp_init(const char *config_file)
 
 	return 0;
 }
+
+int mtcp_test(int val){
+    printf("JINGLIU:test val:%d\n", val);
+    return 0;
+}
 /*----------------------------------------------------------------------------*/
 void 
 mtcp_destroy()
