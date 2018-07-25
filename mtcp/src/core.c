@@ -58,6 +58,15 @@
 
 #define GBPS(bytes) (bytes * 8.0 / (1000 * 1000 * 1000))
 
+int jl_debug_display_core = -1;
+//unsigned long long jl_loop_counter = 0;
+
+static inline uint64_t jl_rdtsc(void)
+{
+    uint64_t eax, edx;
+    __asm volatile ("rdtsc" : "=a" (eax), "=d" (edx));
+    return (edx << 32) | eax;
+}
 
 /*----------------------------------------------------------------------------*/
 /* handlers for threads */
@@ -763,13 +772,15 @@ RunMainLoop(struct mtcp_thread_context *ctx)
 
 	ts = ts_prev = 0;
 	while ((!ctx->done || mtcp->flow_cnt) && !ctx->exit) {
-		
+        //jl_loop_counter++;
 		STAT_COUNT(mtcp->runstat.rounds);
 		recv_cnt = 0;
 			
 		gettimeofday(&cur_ts, NULL);
 		ts = TIMEVAL_TO_TS(&cur_ts);
 		mtcp->cur_ts = ts;
+
+        uint64_t time_tick_while = jl_rdtsc();
 
 		for (rx_inf = 0; rx_inf < CONFIG.eths_num; rx_inf++) {
 
@@ -817,25 +828,27 @@ RunMainLoop(struct mtcp_thread_context *ctx)
 				CheckConnectionTimeout(mtcp, ts, thresh);
 			}
 		}
-
+        uint64_t time_tick_0 = jl_rdtsc();
 		/* if epoll is in use, flush all the queued events */
 		if (mtcp->ep) {
 			FlushEpollEvents(mtcp, ts);
 		}
 
+        uint64_t time_tick_1 = jl_rdtsc();
 		if (mtcp->flow_cnt > 0) {
 			/* hadnle stream queues  */
 			HandleApplicationCalls(mtcp, ts);
 		}
-
+        uint64_t time_tick_2 = jl_rdtsc();
 		WritePacketsToChunks(mtcp, ts);
+        uint64_t time_tick_3 = jl_rdtsc();
 
 		/* send packets from write buffer */
 		/* send until tx is available */
 		for (tx_inf = 0; tx_inf < CONFIG.eths_num; tx_inf++) {
 			mtcp->iom->send_pkts(ctx, tx_inf);
 		}
-
+        uint64_t time_tick_4 = jl_rdtsc();
 		if (ts != ts_prev) {
 			ts_prev = ts;
 			if (ctx->cpu == mtcp_master) {
@@ -847,7 +860,17 @@ RunMainLoop(struct mtcp_thread_context *ctx)
 		}
 
 		mtcp->iom->select(ctx);
-
+        if(jl_debug_display_core > 0){
+            UNUSED(time_tick_0);
+            UNUSED(time_tick_while);
+            UNUSED(time_tick_1);
+            UNUSED(time_tick_2);
+            UNUSED(time_tick_3);
+            UNUSED(time_tick_4);
+            //printf("while-start:%lu - %lu %lu %lu %lu %lu\n", time_tick_while, time_tick_0, time_tick_1, time_tick_2, time_tick_3, time_tick_4);
+            //printf("loop-counter:%llu\n", jl_loop_counter);
+            jl_debug_display_core = -1;
+        }
 		if (ctx->interrupt) {
 			InterruptApplication(mtcp);
 		}

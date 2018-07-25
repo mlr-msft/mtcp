@@ -84,6 +84,15 @@
 #define	ETHER_PREAMBLE			8
 #define ETHER_OVR			(ETHER_CRC_LEN + ETHER_PREAMBLE + ETHER_IFG)
 
+extern int jl_debug_display_core;
+
+static inline uint64_t jl_rdtsc(void)
+{
+    uint64_t eax, edx;
+    __asm volatile ("rdtsc" : "=a" (eax), "=d" (edx));
+    return (edx << 32) | eax;
+}
+
 static uint16_t nb_rxd = 		RTE_TEST_RX_DESC_DEFAULT;
 static uint16_t nb_txd = 		RTE_TEST_TX_DESC_DEFAULT;
 /*----------------------------------------------------------------------------*/
@@ -359,7 +368,11 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 		/* reset the len of mbufs var after flushing of packets */
 		dpc->wmbufs[ifidx].len = 0;
 	}
-
+    if(ret > 0){
+        uint64_t rcd_tick = jl_rdtsc();
+        printf("dpdk_module.c, dpdk_send_pkts, finished:%d time:%lu\n", ret, rcd_tick);
+        jl_debug_display_core = 1;
+    }
 	return ret;
 }
 /*----------------------------------------------------------------------------*/

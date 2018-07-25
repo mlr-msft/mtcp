@@ -188,6 +188,7 @@ mtcp_write(mctx_t mctx, int sockid, const char *buf, size_t len);
 int
 mtcp_writev(mctx_t mctx, int sockid, const struct iovec *iov, int numIOV);
 
+int mtcp_test(int num);
 
 /******************************************************************************/
 // libos_mtcp c interface

@@ -17,9 +17,19 @@
 #include "rss.h"
 #include "config.h"
 #include "debug.h"
+#include "timer.h"
 
 #define MAX(a, b) ((a)>(b)?(a):(b))
 #define MIN(a, b) ((a)<(b)?(a):(b))
+
+//extern unsigned long long jl_loop_counter;
+
+static inline uint64_t jl_rdtsc(void)
+{
+    uint64_t eax, edx;
+    __asm volatile ("rdtsc" : "=a" (eax), "=d" (edx));
+    return (edx << 32) | eax;
+}
 
 /*----------------------------------------------------------------------------*/
 static inline int 
@@ -386,10 +396,12 @@ mtcp_socket(mctx_t mctx, int domain, int type, int protocol)
 
 	mtcp = GetMTCPManager(mctx);
 	if (!mtcp) {
+        printf("_JL_@@@ mtcp not initialized\n");
 		return -1;
 	}
 
 	if (domain != AF_INET) {
+        printf("_JL_@@@ domain != AF_INET\n");
 		errno = EAFNOSUPPORT;
 		return -1;
 	}
@@ -397,12 +409,14 @@ mtcp_socket(mctx_t mctx, int domain, int type, int protocol)
 	if (type == SOCK_STREAM) {
 		type = (int)MTCP_SOCK_STREAM;
 	} else {
+        printf("_JL_@@@ type != SOCK_STREAM\n");
 		errno = EINVAL;
 		return -1;
 	}
 
 	socket = AllocateSocket(mctx, type, FALSE);
 	if (!socket) {
+        printf("_JL@@@ cannot allocakte socket");
 		errno = ENFILE;
 		return -1;
 	}
@@ -576,6 +590,7 @@ mtcp_accept(mctx_t mctx, int sockid, struct sockaddr *addr, socklen_t *addrlen)
 	}
 
 	listener = mtcp->smap[sockid].listener;
+    //printf("_JL_ api.c/mtcp_accept listener for sockid:%d\n", sockid);
 
 	/* dequeue from the acceptq without lock first */
 	/* if nothing there, acquire lock and cond_wait */
@@ -1287,7 +1302,18 @@ mtcp_recv(mctx_t mctx, int sockid, char *buf, size_t len, int flags)
 inline ssize_t
 mtcp_read(mctx_t mctx, int sockid, char *buf, size_t len)
 {
-	return mtcp_recv(mctx, sockid, buf, len, 0);
+	
+    //uint64_t rcd_start = jl_rdtsc();
+	ssize_t ret = mtcp_recv(mctx, sockid, buf, len, 0);
+    //uint64_t rcd_end = jl_rdtsc();
+    //if(rcd_end - rcd_start > 100){
+    //    fprintf(stderr, "mtcp_recv interval:%lu\n", rcd_end - rcd_start);
+    //}
+    /**if(ret > 0){
+        jl_loop_counter = 0;
+        printf("mtcp_read() count > 0\n");
+    }**/
+    return ret;
 }
 /*----------------------------------------------------------------------------*/
 int
@@ -1569,8 +1595,263 @@ mtcp_write(mctx_t mctx, int sockid, const char *buf, size_t len)
 	}
 
 	TRACE_API("Stream %d: mtcp_write() returning %d\n", cur_stream->id, ret);
+
 	return ret;
 }
+
+static inline void 
+FlushEpollEvents(mtcp_manager_t mtcp, uint32_t cur_ts)
+{
+	struct mtcp_epoll *ep = mtcp->ep;
+	struct event_queue *usrq = ep->usr_queue;
+	struct event_queue *mtcpq = ep->mtcp_queue;
+
+	pthread_mutex_lock(&ep->epoll_lock);
+	if (ep->mtcp_queue->num_events > 0) {
+		/* while mtcp_queue have events */
+		/* and usr_queue is not full */
+		while (mtcpq->num_events > 0 && usrq->num_events < usrq->size) {
+			/* copy the event from mtcp_queue to usr_queue */
+			usrq->events[usrq->end++] = mtcpq->events[mtcpq->start++];
+
+			if (usrq->end >= usrq->size)
+				usrq->end = 0;
+			usrq->num_events++;
+
+			if (mtcpq->start >= mtcpq->size)
+				mtcpq->start = 0;
+			mtcpq->num_events--;
+		}
+	}
+
+	/* if there are pending events, wake up user */
+	if (ep->waiting && (ep->usr_queue->num_events > 0 || 
+				ep->usr_shadow_queue->num_events > 0)) {
+		STAT_COUNT(mtcp->runstat.rounds_epoll);
+		TRACE_EPOLL("Broadcasting events. num: %d, cur_ts: %u, prev_ts: %u\n", 
+				ep->usr_queue->num_events, cur_ts, mtcp->ts_last_event);
+		mtcp->ts_last_event = cur_ts;
+		ep->stat.wakes++;
+		pthread_cond_signal(&ep->epoll_cond);
+	}
+	pthread_mutex_unlock(&ep->epoll_lock);
+}
+/*----------------------------------------------------------------------------*/
+static inline void 
+HandleApplicationCalls(mtcp_manager_t mtcp, uint32_t cur_ts)
+{
+	tcp_stream *stream;
+	int cnt, max_cnt;
+	int handled, delayed;
+	int control, send, ack;
+
+	/* connect handling */
+	while ((stream = StreamDequeue(mtcp->connectq))) {
+		AddtoControlList(mtcp, stream, cur_ts);
+	}
+
+	/* send queue handling */
+	while ((stream = StreamDequeue(mtcp->sendq))) {
+		stream->sndvar->on_sendq = FALSE;
+		AddtoSendList(mtcp, stream);
+	}
+	
+	/* ack queue handling */
+	while ((stream = StreamDequeue(mtcp->ackq))) {
+		stream->sndvar->on_ackq = FALSE;
+		EnqueueACK(mtcp, stream, cur_ts, ACK_OPT_AGGREGATE);
+	}
+
+	/* close handling */
+	handled = delayed = 0;
+	control = send = ack = 0;
+	while ((stream = StreamDequeue(mtcp->closeq))) {
+		struct tcp_send_vars *sndvar = stream->sndvar;
+		sndvar->on_closeq = FALSE;
+		
+		if (sndvar->sndbuf) {
+			sndvar->fss = sndvar->sndbuf->head_seq + sndvar->sndbuf->len;
+		} else {
+			sndvar->fss = stream->snd_nxt;
+		}
+
+		if (CONFIG.tcp_timeout > 0)
+			RemoveFromTimeoutList(mtcp, stream);
+
+		if (stream->have_reset) {
+			handled++;
+			if (stream->state != TCP_ST_CLOSED) {
+				stream->close_reason = TCP_RESET;
+				stream->state = TCP_ST_CLOSED;
+				TRACE_STATE("Stream %d: TCP_ST_CLOSED\n", stream->id);
+				DestroyTCPStream(mtcp, stream);
+			} else {
+				TRACE_ERROR("Stream already closed.\n");
+			}
+
+		} else if (sndvar->on_control_list) {
+			sndvar->on_closeq_int = TRUE;
+			StreamInternalEnqueue(mtcp->closeq_int, stream);
+			delayed++;
+			if (sndvar->on_control_list)
+				control++;
+			if (sndvar->on_send_list)
+				send++;
+			if (sndvar->on_ack_list)
+				ack++;
+
+		} else if (sndvar->on_send_list || sndvar->on_ack_list) {
+			handled++;
+			if (stream->state == TCP_ST_ESTABLISHED) {
+				stream->state = TCP_ST_FIN_WAIT_1;
+				TRACE_STATE("Stream %d: TCP_ST_FIN_WAIT_1\n", stream->id);
+
+			} else if (stream->state == TCP_ST_CLOSE_WAIT) {
+				stream->state = TCP_ST_LAST_ACK;
+				TRACE_STATE("Stream %d: TCP_ST_LAST_ACK\n", stream->id);
+			}
+			stream->control_list_waiting = TRUE;
+
+		} else if (stream->state != TCP_ST_CLOSED) {
+			handled++;
+			if (stream->state == TCP_ST_ESTABLISHED) {
+				stream->state = TCP_ST_FIN_WAIT_1;
+				TRACE_STATE("Stream %d: TCP_ST_FIN_WAIT_1\n", stream->id);
+
+			} else if (stream->state == TCP_ST_CLOSE_WAIT) {
+				stream->state = TCP_ST_LAST_ACK;
+				TRACE_STATE("Stream %d: TCP_ST_LAST_ACK\n", stream->id);
+			}
+			//sndvar->rto = TCP_FIN_RTO;
+			//UpdateRetransmissionTimer(mtcp, stream, mtcp->cur_ts);
+			AddtoControlList(mtcp, stream, cur_ts);
+		} else {
+			TRACE_ERROR("Already closed connection!\n");
+		}
+	}
+	TRACE_ROUND("Handling close connections. cnt: %d\n", cnt);
+
+	cnt = 0;
+	max_cnt = mtcp->closeq_int->count;
+	while (cnt++ < max_cnt) {
+		stream = StreamInternalDequeue(mtcp->closeq_int);
+
+		if (stream->sndvar->on_control_list) {
+			StreamInternalEnqueue(mtcp->closeq_int, stream);
+
+		} else if (stream->state != TCP_ST_CLOSED) {
+			handled++;
+			stream->sndvar->on_closeq_int = FALSE;
+			if (stream->state == TCP_ST_ESTABLISHED) {
+				stream->state = TCP_ST_FIN_WAIT_1;
+				TRACE_STATE("Stream %d: TCP_ST_FIN_WAIT_1\n", stream->id);
+
+			} else if (stream->state == TCP_ST_CLOSE_WAIT) {
+				stream->state = TCP_ST_LAST_ACK;
+				TRACE_STATE("Stream %d: TCP_ST_LAST_ACK\n", stream->id);
+			}
+			AddtoControlList(mtcp, stream, cur_ts);
+		} else {
+			stream->sndvar->on_closeq_int = FALSE;
+			TRACE_ERROR("Already closed connection!\n");
+		}
+	}
+
+	/* reset handling */
+	while ((stream = StreamDequeue(mtcp->resetq))) {
+		stream->sndvar->on_resetq = FALSE;
+		
+		if (CONFIG.tcp_timeout > 0)
+			RemoveFromTimeoutList(mtcp, stream);
+
+		if (stream->have_reset) {
+			if (stream->state != TCP_ST_CLOSED) {
+				stream->close_reason = TCP_RESET;
+				stream->state = TCP_ST_CLOSED;
+				TRACE_STATE("Stream %d: TCP_ST_CLOSED\n", stream->id);
+				DestroyTCPStream(mtcp, stream);
+			} else {
+				TRACE_ERROR("Stream already closed.\n");
+			}
+
+		} else if (stream->sndvar->on_control_list || 
+				stream->sndvar->on_send_list || stream->sndvar->on_ack_list) {
+			/* wait until all the queues are flushed */
+			stream->sndvar->on_resetq_int = TRUE;
+			StreamInternalEnqueue(mtcp->resetq_int, stream);
+
+		} else {
+			if (stream->state != TCP_ST_CLOSED) {
+				stream->close_reason = TCP_ACTIVE_CLOSE;
+				stream->state = TCP_ST_CLOSED;
+				TRACE_STATE("Stream %d: TCP_ST_CLOSED\n", stream->id);
+				AddtoControlList(mtcp, stream, cur_ts);
+			} else {
+				TRACE_ERROR("Stream already closed.\n");
+			}
+		}
+	}
+	TRACE_ROUND("Handling reset connections. cnt: %d\n", cnt);
+
+	cnt = 0;
+	max_cnt = mtcp->resetq_int->count;
+	while (cnt++ < max_cnt) {
+		stream = StreamInternalDequeue(mtcp->resetq_int);
+		
+		if (stream->sndvar->on_control_list || 
+				stream->sndvar->on_send_list || stream->sndvar->on_ack_list) {
+			/* wait until all the queues are flushed */
+			StreamInternalEnqueue(mtcp->resetq_int, stream);
+
+		} else {
+			stream->sndvar->on_resetq_int = FALSE;
+
+			if (stream->state != TCP_ST_CLOSED) {
+				stream->close_reason = TCP_ACTIVE_CLOSE;
+				stream->state = TCP_ST_CLOSED;
+				TRACE_STATE("Stream %d: TCP_ST_CLOSED\n", stream->id);
+				AddtoControlList(mtcp, stream, cur_ts);
+			} else {
+				TRACE_ERROR("Stream already closed.\n");
+			}
+		}
+	}
+
+	/* destroy streams in destroyq */
+	while ((stream = StreamDequeue(mtcp->destroyq))) {
+		DestroyTCPStream(mtcp, stream);
+	}
+
+	mtcp->wakeup_flag = FALSE;
+}
+/*----------------------------------------------------------------------------*/
+static inline void 
+WritePacketsToChunks(mtcp_manager_t mtcp, uint32_t cur_ts)
+{
+	int thresh = CONFIG.max_concurrency;
+	int i;
+
+	/* Set the threshold to CONFIG.max_concurrency to send ACK immediately */
+	/* Otherwise, set to appropriate value (e.g. thresh) */
+	assert(mtcp->g_sender != NULL);
+	if (mtcp->g_sender->control_list_cnt)
+		WriteTCPControlList(mtcp, mtcp->g_sender, cur_ts, thresh);
+	if (mtcp->g_sender->ack_list_cnt)
+		WriteTCPACKList(mtcp, mtcp->g_sender, cur_ts, thresh);
+	if (mtcp->g_sender->send_list_cnt)
+		WriteTCPDataList(mtcp, mtcp->g_sender, cur_ts, thresh);
+
+	for (i = 0; i < CONFIG.eths_num; i++) {
+		assert(mtcp->n_sender[i] != NULL);
+		if (mtcp->n_sender[i]->control_list_cnt)
+			WriteTCPControlList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
+		if (mtcp->n_sender[i]->ack_list_cnt)
+			WriteTCPACKList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
+		if (mtcp->n_sender[i]->send_list_cnt)
+			WriteTCPDataList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
+	}
+}
+
 /*----------------------------------------------------------------------------*/
 int
 mtcp_writev(mctx_t mctx, int sockid, const struct iovec *iov, int numIOV)
@@ -1678,11 +1959,30 @@ mtcp_writev(mctx_t mctx, int sockid, const struct iovec *iov, int numIOV)
 		}
 	}
 
-	TRACE_API("Stream %d: mtcp_writev() returning %d\n", 
-			cur_stream->id, to_write);
+	TRACE_API("Stream %d: mtcp_writev() returning %d\n", cur_stream->id, to_write);
+    if(to_write > 0){
+        // do write
+        uint32_t ts;
+        int tx_inf;
+        struct timeval cur_ts = {0};
+        gettimeofday(&cur_ts, NULL);
+        ts = TIMEVAL_TO_TS(&cur_ts);
+        // not sure mtcp->cur_ts = ts;
+        if(mtcp->ep){
+            FlushEpollEvents(mtcp, ts);
+        }
+        HandleApplicationCalls(mtcp, ts);
+        WritePacketsToChunks(mtcp, ts);
+        for(tx_inf = 0; tx_inf < CONFIG.eths_num; tx_inf ++){
+            mtcp->iom->send_pkts(mtcp->ctx, tx_inf);
+        }
+    }
 	return to_write;
 }
 
-
+int mtcp_test(int num){
+    printf("@@@@@@@@ mtcp_test @@@@@@@\n");
+    return num + 1;
+}
 
 /*----------------------------------------------------------------------------*/
