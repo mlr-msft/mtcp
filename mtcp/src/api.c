@@ -23,6 +23,10 @@
 #define MIN(a, b) ((a)<(b)?(a):(b))
 
 //extern unsigned long long jl_loop_counter;
+extern int jl_debug_display_ack;
+//static int jl_debug_null_sum = 0;
+extern struct tcp_ring_buffer *global_rcv_buf;
+extern struct tcp_recv_vars *global_rcv_vars;
 
 static inline uint64_t jl_rdtsc(void)
 {
@@ -1138,12 +1142,16 @@ CopyToUser(mtcp_manager_t mtcp, tcp_stream *cur_stream, char *buf, int len)
 	struct tcp_recv_vars *rcvvar = cur_stream->rcvvar;
 	uint32_t prev_rcv_wnd;
 	int copylen;
-
+    //uint64_t tmp_tick = jl_rdtsc();
+    //if(jl_debug_display_ack > 0){
+        //printf("CopyToUser merged_len:%d ask_len:%d\n", rcvvar->rcvbuf->merged_len, len);
+    //}
 	copylen = MIN(rcvvar->rcvbuf->merged_len, len);
 	if (copylen <= 0) {
 		errno = EAGAIN;
 		return -1;
 	}
+    //printf("CopyToUser will do copy for copylen%d time_tick:%lu\n", copylen, tmp_tick);
 
 	prev_rcv_wnd = rcvvar->rcv_wnd;
 	/* Copy data to user buffer and remove it from receiving buffer */
@@ -1226,15 +1234,27 @@ mtcp_recv(mctx_t mctx, int sockid, char *buf, size_t len, int flags)
 		if (rcvvar->rcvbuf->merged_len == 0)
 			return 0;
         }
-	
+
+
 	/* return EAGAIN if no receive buffer */
 	if (socket->opts & MTCP_NONBLOCK) {
 		if (!rcvvar->rcvbuf || rcvvar->rcvbuf->merged_len == 0) {
+            if(rcvvar->rcvbuf && jl_debug_display_ack > 0){
+                //printf("rcvvar->rcvbuf->merged_len:%d\n", rcvvar->rcvbuf->merged_len);
+                jl_debug_display_ack = -1;
+            }
 			errno = EAGAIN;
 			return -1;
 		}
 	}
-	
+
+
+    //uint64_t tmp_tick = jl_rdtsc();	
+    //int tmp_merged_len = -1;
+    //if(rcvvar->rcvbuf){
+    //    tmp_merged_len = rcvvar->rcvbuf->merged_len;
+    //}
+    //printf("Before SBUF_LOCK time_tick:%lu merged_len == %d rcvvar:%p, rcvvar.rcvbuf:%p\n", tmp_tick, tmp_merged_len, rcvvar, rcvvar->rcvbuf);
 	SBUF_LOCK(&rcvvar->read_lock);
 #if BLOCKING_SUPPORT
 	if (!(socket->opts & MTCP_NONBLOCK)) {
@@ -1659,6 +1679,7 @@ HandleApplicationCalls(mtcp_manager_t mtcp, uint32_t cur_ts)
 	/* ack queue handling */
 	while ((stream = StreamDequeue(mtcp->ackq))) {
 		stream->sndvar->on_ackq = FALSE;
+        printf("api.c/HandleApplicationCalls will call EnqueueACK\n");
 		EnqueueACK(mtcp, stream, cur_ts, ACK_OPT_AGGREGATE);
 	}
 
@@ -1834,21 +1855,33 @@ WritePacketsToChunks(mtcp_manager_t mtcp, uint32_t cur_ts)
 	/* Set the threshold to CONFIG.max_concurrency to send ACK immediately */
 	/* Otherwise, set to appropriate value (e.g. thresh) */
 	assert(mtcp->g_sender != NULL);
-	if (mtcp->g_sender->control_list_cnt)
+	if (mtcp->g_sender->control_list_cnt){
+        printf("api.c/WriteTCPControlList\n");
 		WriteTCPControlList(mtcp, mtcp->g_sender, cur_ts, thresh);
-	if (mtcp->g_sender->ack_list_cnt)
+    }
+	if (mtcp->g_sender->ack_list_cnt){
+        printf("api.c/WriteTCPACKList");
 		WriteTCPACKList(mtcp, mtcp->g_sender, cur_ts, thresh);
-	if (mtcp->g_sender->send_list_cnt)
+    }
+	if (mtcp->g_sender->send_list_cnt){
+        printf("api.c/WriteTCPDataList\n");
 		WriteTCPDataList(mtcp, mtcp->g_sender, cur_ts, thresh);
+    }
 
 	for (i = 0; i < CONFIG.eths_num; i++) {
 		assert(mtcp->n_sender[i] != NULL);
-		if (mtcp->n_sender[i]->control_list_cnt)
+		if (mtcp->n_sender[i]->control_list_cnt){
+            printf("api.c/WriteTCPControlList i:%d\n", i);
 			WriteTCPControlList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
-		if (mtcp->n_sender[i]->ack_list_cnt)
+        }
+		if (mtcp->n_sender[i]->ack_list_cnt){
+            printf("api.c/WriteTCPACKList i:%d\n", i);
 			WriteTCPACKList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
-		if (mtcp->n_sender[i]->send_list_cnt)
+        }
+		if (mtcp->n_sender[i]->send_list_cnt){
+            //printf("api.c/WriteTCPDataList i:%d\n", i);
 			WriteTCPDataList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
+        }
 	}
 }
 

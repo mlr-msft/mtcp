@@ -31,17 +31,18 @@ ProcessPacket(mtcp_manager_t mtcp, const int ifidx,
 		}
 	}
 #endif
-
 	if (ip_proto == ETH_P_IP) {
 		/* process ipv4 packet */
 		ret = ProcessIPv4Packet(mtcp, cur_ts, ifidx, pkt_data, len);
 
 	} else if (ip_proto == ETH_P_ARP) {
+        printf("eth_in.c will processARPPacket\n");
 		ProcessARPPacket(mtcp, cur_ts, ifidx, pkt_data, len);
 		return TRUE;
 
 	} else {
 		//DumpPacket(mtcp, (char *)pkt_data, len, "??", ifidx);
+        printf("eth_in.c will repease pkt\n");
 		mtcp->iom->release_pkt(mtcp->ctx, ifidx, pkt_data, len);
 		return TRUE;
 	}

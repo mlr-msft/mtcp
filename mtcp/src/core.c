@@ -505,6 +505,7 @@ HandleApplicationCalls(mtcp_manager_t mtcp, uint32_t cur_ts)
 	/* ack queue handling */
 	while ((stream = StreamDequeue(mtcp->ackq))) {
 		stream->sndvar->on_ackq = FALSE;
+        printf("core.c/HandleApplicationCalls will EnqueueACK\n");
 		EnqueueACK(mtcp, stream, cur_ts, ACK_OPT_AGGREGATE);
 	}
 
@@ -680,21 +681,35 @@ WritePacketsToChunks(mtcp_manager_t mtcp, uint32_t cur_ts)
 	/* Set the threshold to CONFIG.max_concurrency to send ACK immediately */
 	/* Otherwise, set to appropriate value (e.g. thresh) */
 	assert(mtcp->g_sender != NULL);
-	if (mtcp->g_sender->control_list_cnt)
+	if (mtcp->g_sender->control_list_cnt){
+        printf("core.c/WriteTCPControlList\n");
 		WriteTCPControlList(mtcp, mtcp->g_sender, cur_ts, thresh);
-	if (mtcp->g_sender->ack_list_cnt)
+    }
+	if (mtcp->g_sender->ack_list_cnt){
+        uint64_t wack_tick = jl_rdtsc();
+        printf("core.c/WriteTCPACKList time_tick:%lu\n", wack_tick);
 		WriteTCPACKList(mtcp, mtcp->g_sender, cur_ts, thresh);
-	if (mtcp->g_sender->send_list_cnt)
+    }
+	if (mtcp->g_sender->send_list_cnt){
+        printf("core.c/WriteTCPDataList\n");
 		WriteTCPDataList(mtcp, mtcp->g_sender, cur_ts, thresh);
+    }
 
 	for (i = 0; i < CONFIG.eths_num; i++) {
 		assert(mtcp->n_sender[i] != NULL);
-		if (mtcp->n_sender[i]->control_list_cnt)
+		if (mtcp->n_sender[i]->control_list_cnt){
+            //printf("core.c/WriteTCPControlList i:%d\n", i);
 			WriteTCPControlList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
-		if (mtcp->n_sender[i]->ack_list_cnt)
+        }
+		if (mtcp->n_sender[i]->ack_list_cnt){
+            //uint64_t wack_tick = jl_rdtsc();
+            //printf("core.c/WriteTCPACKList i:%d time_tick:%lu\n", i, wack_tick);
 			WriteTCPACKList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
-		if (mtcp->n_sender[i]->send_list_cnt)
+        }
+		if (mtcp->n_sender[i]->send_list_cnt){
+            //printf("core.c WriteTCPDataList i:%d\n", i);
 			WriteTCPDataList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
+        }
 	}
 }
 /*----------------------------------------------------------------------------*/
@@ -791,8 +806,11 @@ RunMainLoop(struct mtcp_thread_context *ctx)
 				uint16_t len;
 				uint8_t *pktbuf;
 				pktbuf = mtcp->iom->get_rptr(mtcp->ctx, rx_inf, i, &len);
-				if (pktbuf != NULL)
+				if (pktbuf != NULL){
+                    //uint64_t tmp_tick = jl_rdtsc();
+                    //printf("RunMainLoop-i:%d tmp_tick:%lu\n", i, tmp_tick);
 					ProcessPacket(mtcp, rx_inf, ts, pktbuf, len);
+                }
 #ifdef NETSTAT
 				else
 					mtcp->nstat.rx_errors[rx_inf]++;

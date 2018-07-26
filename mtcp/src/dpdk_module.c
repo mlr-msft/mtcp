@@ -369,8 +369,8 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 		dpc->wmbufs[ifidx].len = 0;
 	}
     if(ret > 0){
-        uint64_t rcd_tick = jl_rdtsc();
-        printf("dpdk_module.c, dpdk_send_pkts, finished:%d time:%lu\n", ret, rcd_tick);
+        //uint64_t rcd_tick = jl_rdtsc();
+        //printf("dpdk_module.c, dpdk_send_pkts, finished:%d time:%lu\n", ret, rcd_tick);
         jl_debug_display_core = 1;
     }
 	return ret;

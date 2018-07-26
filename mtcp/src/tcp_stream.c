@@ -482,6 +482,7 @@ DestroyTCPStream(mtcp_manager_t mtcp, tcp_stream *stream)
 	}
 	if (stream->rcvvar->rcvbuf) {
 		RBFree(mtcp->rbm_rcv, stream->rcvvar->rcvbuf);
+        printf("@@@@@@@@@@DestroyTCPStrem() will set to NULL\n");
 		stream->rcvvar->rcvbuf = NULL;
 	}
 

@@ -20,6 +20,10 @@
 	else								\
 		memcpy(buff->head + putx, data, len);
 #endif
+
+
+int jl_debug_display_ack = -1;
+
 /*----------------------------------------------------------------------------*/
 struct rb_manager
 {
@@ -294,6 +298,8 @@ RBPut(rb_manager_t rbm, struct tcp_ring_buffer* buff,
 	struct fragment_ctx* prev, *pprev;
 	int merged = 0;
 
+    //int init_len = buff->merged_len;
+
 	if (len <= 0)
 		return 0;
 
@@ -384,7 +390,8 @@ RBPut(rb_manager_t rbm, struct tcp_ring_buffer* buff,
 		buff->cum_len += buff->fctx->len - buff->merged_len;
 		buff->merged_len = buff->fctx->len;
 	}
-	
+    //printf("RBPut merged_len: from:%d to:%d buf_addr:%p\n", init_len, buff->merged_len, buff);	
+    jl_debug_display_ack = 1;
 	return len;
 }
 /*----------------------------------------------------------------------------*/
