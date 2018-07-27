@@ -10,6 +10,7 @@
 #include "debug.h"
 #include "timer.h"
 #include "ip_in.h"
+#include "../../../mtcp_measure.h"
 
 #define MAX(a, b) ((a)>(b)?(a):(b))
 #define MIN(a, b) ((a)<(b)?(a):(b))
@@ -135,7 +136,7 @@ ValidateSequence(mtcp_manager_t mtcp, tcp_stream *cur_stream, uint32_t cur_ts,
 			TRACE_DBG("PAWS Detect wrong timestamp. "
 					"seq: %u, ts_val: %u, prev: %u\n", 
 					seq, ts.ts_val, cur_stream->rcvvar->ts_recent);
-            printf("125:tcp_in.c/ValidateSequence EnqueueACK\n");
+            //printf("125:tcp_in.c/ValidateSequence EnqueueACK\n");
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
 			return FALSE;
 		} else {
@@ -568,8 +569,10 @@ ProcessTCPPayload(mtcp_manager_t mtcp, tcp_stream *cur_stream,
 		return FALSE;
 	}
 
+#ifdef _LIBOS_MTCP_TOTAL_SERVER_LTC_
     uint64_t tmp_tick = jl_rdtsc();
-    printf("tcp_in.c/ProcessTCPPayload(start) tmp_tick:%lu\n", tmp_tick);
+    fprintf(stderr, "tcp_in.c/ProcessTCPPayload(start) tmp_tick:%lu\n", tmp_tick);
+#endif
 	/* allocate receive buffer if not exist */
 	if (!rcvvar->rcvbuf) {
         //printf("@@@@@@tcp_in.c/ProcessTCPPayload will allocate rcvbuf\n");

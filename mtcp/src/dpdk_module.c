@@ -32,6 +32,24 @@
 /* for ip defragging */
 #include <rte_ip_frag.h>
 #endif
+
+#include "../../../mtcp_measure.h"
+
+#ifdef _LIBOS_MTCP_DPDK_SND_LTC_
+static uint64_t dpdk_snd_cumulative_ticks = 0;
+#endif
+
+#ifdef _LIBOS_MTCP_DPDK_RCV_LTC_
+static uint64_t dpdk_rcv_cumulative_ticks = 0;
+#endif
+
+static inline uint64_t jl_rdtsc(void)
+{
+    uint64_t eax, edx;
+    __asm volatile ("rdtsc" : "=a" (eax), "=d" (edx));
+    return (edx << 32) | eax;
+}
+
 /*----------------------------------------------------------------------------*/
 /* Essential macros */
 #define MAX_RX_QUEUE_PER_LCORE		MAX_CPUS
@@ -85,13 +103,6 @@
 #define ETHER_OVR			(ETHER_CRC_LEN + ETHER_PREAMBLE + ETHER_IFG)
 
 extern int jl_debug_display_core;
-
-static inline uint64_t jl_rdtsc(void)
-{
-    uint64_t eax, edx;
-    __asm volatile ("rdtsc" : "=a" (eax), "=d" (edx));
-    return (edx << 32) | eax;
-}
 
 static uint16_t nb_rxd = 		RTE_TEST_RX_DESC_DEFAULT;
 static uint16_t nb_txd = 		RTE_TEST_TX_DESC_DEFAULT;
@@ -300,6 +311,11 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 #endif
 	int ret, i, portid = CONFIG.eths[ifidx].ifindex;
 
+#ifdef _LIBOS_MTCP_DPDK_SND_LTC_
+    uint64_t dpdk_snd_start_tick, dpdk_snd_end_tick, dpdk_snd_total_ticks;
+    dpdk_snd_total_ticks = 0;
+#endif
+
 	dpc = (struct dpdk_private_context *)ctxt->io_private_context;
 #ifdef NETSTAT
 	mtcp = ctxt->mtcp_manager;
@@ -348,8 +364,16 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 #endif
 		do {
 			/* tx cnt # of packets */
+#ifdef _LIBOS_MTCP_DPDK_SND_LTC_
+            dpdk_snd_start_tick = jl_rdtsc();
+#endif
 			ret = rte_eth_tx_burst(portid, ctxt->cpu,
 					       pkts, cnt);
+#ifdef _LIBOS_MTCP_DPDK_SND_LTC_
+            dpdk_snd_end_tick = jl_rdtsc();
+            dpdk_snd_total_ticks += (dpdk_snd_end_tick - dpdk_snd_start_tick);
+            dpdk_snd_cumulative_ticks += dpdk_snd_total_ticks;
+#endif
 			pkts += ret;
 			cnt -= ret;
 			/* if not all pkts were sent... then repeat the cycle */
@@ -373,6 +397,12 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int ifidx)
         //printf("dpdk_module.c, dpdk_send_pkts, finished:%d time:%lu\n", ret, rcd_tick);
         jl_debug_display_core = 1;
     }
+#ifdef _LIBOS_MTCP_DPDK_SND_LTC_
+    if(ret > 0){
+        fprintf(stderr, "single_dpdk_snd_total_ticks:%lu dpdk_snd_cumulative_ticks:%lu\n",
+                dpdk_snd_total_ticks, dpdk_snd_cumulative_ticks);
+    }
+#endif
 	return ret;
 }
 /*----------------------------------------------------------------------------*/
@@ -441,8 +471,23 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	}
 
 	int portid = CONFIG.eths[ifidx].ifindex;
+#ifdef _LIBOS_MTCP_DPDK_RCV_LTC_
+    uint64_t dpdk_rcv_start_tick, dpdk_rcv_end_tick, dpdk_rcv_total_ticks;
+    dpdk_rcv_total_ticks = 0;
+    dpdk_rcv_start_tick = jl_rdtsc();
+#endif
 	ret = rte_eth_rx_burst((uint8_t)portid, ctxt->cpu,
 			       dpc->pkts_burst, MAX_PKT_BURST);
+#ifdef _LIBOS_MTCP_DPDK_RCV_LTC_
+    dpdk_rcv_end_tick = jl_rdtsc();
+    dpdk_rcv_total_ticks = (dpdk_rcv_end_tick - dpdk_rcv_start_tick);
+    dpdk_rcv_cumulative_ticks += dpdk_rcv_total_ticks;
+    if(ret > 0){
+        fprintf(stderr, "single_dpdk_rcv_total_ticks:%lu dpdk_rcv_cumulative_ticks:%lu\n",
+                dpdk_rcv_total_ticks, dpdk_rcv_cumulative_ticks);
+    }
+#endif
+
 #ifdef RX_IDLE_ENABLE
 	dpc->rx_idle = (likely(ret != 0)) ? 0 : dpc->rx_idle + 1;
 #endif
