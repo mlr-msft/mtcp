@@ -6,7 +6,7 @@
 #include <sys/uio.h>
 
 #ifndef UNUSED
-#define UNUSED(x)	(void)x
+#define UNUSED(x)	((void)x)
 #endif
 
 #ifndef INPORT_ANY
@@ -155,7 +155,8 @@ int
 mtcp_getpeername(mctx_t mctx, int sockid, struct sockaddr *addr,
 		 socklen_t *addrlen);
 
-inline ssize_t
+//inline ssize_t
+ssize_t
 mtcp_read(mctx_t mctx, int sockid, char *buf, size_t len);
 
 ssize_t
@@ -172,30 +173,6 @@ mtcp_write(mctx_t mctx, int sockid, const char *buf, size_t len);
 int
 mtcp_writev(mctx_t mctx, int sockid, const struct iovec *iov, int numIOV);
 
-
-/******************************************************************************/
-// libos_mtcp c interface
-/******************************************************************************/
-
-// typedef int qtoken
-
-// network functions
-int libos_mtcp_queue(int domain, int type, int protocol);
-int libos_mtcp_listen(int qd, int backlog);
-int libos_mtcp_bind(int qd, struct sockaddr *saddr, socklen_t size);
-int libos_mtcp_accept(int qd, struct sockaddr *saddr, socklen_t *size);
-int libos_mtcp_connect(int qd, struct sockaddr *saddr, socklen_t size);
-int libos_mtcp_close(int qd);
-// other functions
-int libos_mtcp_push(int qd, zeus_sgarray *sga);
-int libos_mtcp_pop(int qd, zeus_sgarray *sga);
-ssize_t libost_mtpc_wait(int *qts, size_t num_qts);
-ssize_t libos_mtcp_wait_all(int *qts, size_t num_qts);
-ssize_t libos_mtcp_blocking_push(int qd, zeus_sgarray *sga);
-ssize_t libos_mtcp_blocking_pop(int qd, zeus_sgarray *sga);
-
-/******************************************************************************/
-/******************************************************************************/
 
 #ifdef __cplusplus
 };
