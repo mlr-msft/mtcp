@@ -12,6 +12,12 @@
 #include "ip_in.h"
 #include "../../../mtcp_measure.h"
 
+#ifdef _LIBOS_MTCP_MEASURE_ONCE_
+    extern libos_mtcp_ticks global_libos_mtcp_ticks;
+    extern uint64_t req_dpdk_recv_end_tick;
+    extern uint64_t req_dpdk_recv_start_tick;
+#endif
+
 #define MAX(a, b) ((a)>(b)?(a):(b))
 #define MIN(a, b) ((a)<(b)?(a):(b))
 
@@ -568,10 +574,14 @@ ProcessTCPPayload(mtcp_manager_t mtcp, tcp_stream *cur_stream,
 	if (TCP_SEQ_GT(seq + payloadlen, cur_stream->rcv_nxt + rcvvar->rcv_wnd)) {
 		return FALSE;
 	}
+#ifdef _LIBOS_MTCP_MEASURE_ONCE_
+    global_libos_mtcp_ticks.dpdk_recv_start_tick = req_dpdk_recv_start_tick;
+    global_libos_mtcp_ticks.dpdk_recv_end_tick = req_dpdk_recv_end_tick;
+#endif
 
 #ifdef _LIBOS_MTCP_TOTAL_SERVER_LTC_
     uint64_t tmp_tick = jl_rdtsc();
-    fprintf(stderr, "tcp_in.c/ProcessTCPPayload(start) tmp_tick:%lu\n", tmp_tick);
+    fprintf(stdout, "tcp_in.c/ProcessTCPPayload(start) tmp_tick:%lu\n", tmp_tick);
 #endif
 	/* allocate receive buffer if not exist */
 	if (!rcvvar->rcvbuf) {
@@ -889,15 +899,20 @@ Handle_TCP_ST_ESTABLISHED (mtcp_manager_t mtcp, uint32_t cur_ts,
             //usleep(1);
             /*******/
             // this two nanosleep() suite works well
-            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
-            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+            //nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+            //nanosleep((const struct timespec[]){{0, 1L}}, NULL);
             /******/
             //pthread_yield();
-			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
-			//EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_AGGREGATE);
+			//EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
+			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_AGGREGATE);
+            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+         
 		} else {
-            printf("866:Handle_TCP_ST_ESTABLISHED() will call EnqueueACK\n");
+            //printf("866:Handle_TCP_ST_ESTABLISHED() will call EnqueueACK\n");
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
+            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
 		}
 	}
 	

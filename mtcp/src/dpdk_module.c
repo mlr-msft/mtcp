@@ -35,6 +35,14 @@
 
 #include "../../../mtcp_measure.h"
 
+
+#ifdef _LIBOS_MTCP_MEASURE_ONCE_
+    libos_mtcp_ticks global_libos_mtcp_ticks = {0};
+    int display_write = 0;;
+    uint64_t req_dpdk_recv_start_tick = 0;
+    uint64_t req_dpdk_recv_end_tick = 0;
+#endif
+
 #ifdef _LIBOS_MTCP_DPDK_SND_LTC_
 static uint64_t dpdk_snd_cumulative_ticks = 0;
 #endif
@@ -305,6 +313,9 @@ dpdk_release_pkt(struct mtcp_thread_context *ctxt, int ifidx, unsigned char *pkt
 int
 dpdk_send_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 {
+#ifdef _LIBOS_MTCP_MEASURE_ONCE_
+    uint64_t dpdk_snd_start_tick = jl_rdtsc();
+#endif
 	struct dpdk_private_context *dpc;
 #ifdef NETSTAT
 	mtcp_manager_t mtcp;
@@ -403,6 +414,16 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int ifidx)
                 dpdk_snd_total_ticks, dpdk_snd_cumulative_ticks);
     }
 #endif
+#ifdef _LIBOS_MTCP_MEASURE_ONCE_
+    uint64_t dpdk_snd_end_tick = jl_rdtsc();
+    if(ret > 0){
+        if(display_write){
+            global_libos_mtcp_ticks.dpdk_send_start_tick = dpdk_snd_start_tick;
+            global_libos_mtcp_ticks.dpdk_send_end_tick = dpdk_snd_end_tick;
+        }
+        display_write = 0;
+    }
+#endif
 	return ret;
 }
 /*----------------------------------------------------------------------------*/
@@ -471,6 +492,9 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	}
 
 	int portid = CONFIG.eths[ifidx].ifindex;
+#ifdef _LIBOS_MTCP_MEASURE_ONCE_
+    uint64_t dpdk_rcv_start_tick = jl_rdtsc();
+#endif
 #ifdef _LIBOS_MTCP_DPDK_RCV_LTC_
     uint64_t dpdk_rcv_start_tick, dpdk_rcv_end_tick, dpdk_rcv_total_ticks;
     dpdk_rcv_total_ticks = 0;
@@ -492,6 +516,12 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	dpc->rx_idle = (likely(ret != 0)) ? 0 : dpc->rx_idle + 1;
 #endif
 	dpc->rmbufs[ifidx].len = ret;
+#ifdef _LIBOS_MTCP_MEASURE_ONCE_
+    if(ret > 0){
+        req_dpdk_recv_end_tick = jl_rdtsc();
+        req_dpdk_recv_start_tick = dpdk_rcv_start_tick;
+    }
+#endif
 
 	return ret;
 }

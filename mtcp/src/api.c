@@ -1875,7 +1875,7 @@ WritePacketsToChunks(mtcp_manager_t mtcp, uint32_t cur_ts)
 			WriteTCPControlList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
         }
 		if (mtcp->n_sender[i]->ack_list_cnt){
-            printf("api.c/WriteTCPACKList i:%d\n", i);
+            //printf("api.c/WriteTCPACKList i:%d\n", i);
 			WriteTCPACKList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
         }
 		if (mtcp->n_sender[i]->send_list_cnt){
