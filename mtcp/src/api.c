@@ -17,9 +17,41 @@
 #include "rss.h"
 #include "config.h"
 #include "debug.h"
+#include "measure_def.h"
 
 #define MAX(a, b) ((a)>(b)?(a):(b))
 #define MIN(a, b) ((a)<(b)?(a):(b))
+
+#ifdef _MTCP_MEASURE_SERVER_OVERALL_
+    extern uint64_t req_recv_tick;
+    extern int display_send;
+#endif
+
+#ifdef _MTCP_MEASURE_MTCP_READ_2_DPDK_READ_
+    extern uint64_t req_recv_tick;
+#endif
+
+#ifdef _MTCP_MEASURE_MTCP_WRITE_2_DPDK_WRITE_
+    extern int display_send;
+    uint64_t rpl_written_tick;
+#endif
+
+#ifdef _MTCP_MEASURE_DPDK_RECV_
+    extern uint64_t req_recv_tick;
+    extern uint64_t req_recv_end_tick;
+#endif
+
+#ifdef _MTCP_MEASURE_DPDK_SEND_
+    extern int display_send;
+#endif
+
+
+static inline uint64_t jl_rdtsc(void)
+{
+    uint64_t eax, edx;
+    __asm volatile ("rdtsc" : "=a" (eax), "=d" (edx));
+    return (edx << 32) | eax;
+}
 
 /*----------------------------------------------------------------------------*/
 static inline int 
@@ -1287,7 +1319,32 @@ mtcp_recv(mctx_t mctx, int sockid, char *buf, size_t len, int flags)
 inline ssize_t
 mtcp_read(mctx_t mctx, int sockid, char *buf, size_t len)
 {
-	return mtcp_recv(mctx, sockid, buf, len, 0);
+#ifdef _MTCP_MEASURE_MTCP_READ_2_DPDK_READ_
+    uint64_t read_start_tick = jl_rdtsc();
+#endif
+#ifdef _MTCP_MEASURE_READ_
+    uint64_t read_start_tick = jl_rdtsc();
+#endif
+    /***************************************************/
+	ssize_t ret = mtcp_recv(mctx, sockid, buf, len, 0);
+    /***************************************************/
+    if(ret > 0){
+#ifdef _MTCP_MEASURE_SERVER_OVERALL_
+        fprintf(stderr, "mtcp_read ret:%ld time_tick_before_dpdk_recv:%lu\n", ret, req_recv_tick);
+#endif
+#ifdef _MTCP_MEASURE_MTCP_READ_2_DPDK_READ_
+        fprintf(stderr, "mtcp_read ret:%ld read_start_tick:%lu recv_pkts_start_tick:%lu\n", ret, read_start_tick, req_recv_tick);
+#endif
+#ifdef _MTCP_MEASURE_DPDK_RECV_
+        fprintf(stderr, "dpdk_recv total_ticks:%lu\n", (req_recv_end_tick - req_recv_tick));
+#endif
+
+#ifdef _MTCP_MEASURE_READ_
+    uint64_t read_end_tick = jl_rdtsc();
+    fprintf(stderr, "mtcp_read total_ticks:%lu\n", (read_end_tick - read_start_tick));
+#endif
+    }
+    return ret;
 }
 /*----------------------------------------------------------------------------*/
 int
@@ -1464,6 +1521,9 @@ CopyFromUser(mtcp_manager_t mtcp, tcp_stream *cur_stream, const char *buf, int l
 ssize_t
 mtcp_write(mctx_t mctx, int sockid, const char *buf, size_t len)
 {
+#ifdef _MTCP_MEASURE_WRITE_
+    uint64_t write_start_tick = jl_rdtsc();
+#endif
 	mtcp_manager_t mtcp;
 	socket_map_t socket;
 	tcp_stream *cur_stream;
@@ -1569,6 +1629,26 @@ mtcp_write(mctx_t mctx, int sockid, const char *buf, size_t len)
 	}
 
 	TRACE_API("Stream %d: mtcp_write() returning %d\n", cur_stream->id, ret);
+    if(ret > 0){
+#ifdef _MTCP_MEASURE_SERVER_OVERALL_
+        //uint64_t temp_tick = jl_rdtsc();
+        //fprintf(stderr, "mtcp_write ret:%d time_tick:%lu\n", ret, temp_tick);
+        display_send = 1;
+#endif
+#ifdef  _MTCP_MEASURE_MTCP_WRITE_2_DPDK_WRITE_
+        display_send = 1;
+        rpl_written_tick = jl_rdtsc();
+#endif
+
+#ifdef _MTCP_MEASURE_WRITE_
+        uint64_t write_end_tick = jl_rdtsc();
+        fprintf(stderr, "mtcp_write total_ticks:%lu\n", (write_end_tick - write_start_tick));
+#endif
+
+#ifdef _MTCP_MEASURE_DPDK_SEND_
+        display_send = 1;
+#endif
+    }
 	return ret;
 }
 /*----------------------------------------------------------------------------*/
