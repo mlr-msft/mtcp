@@ -22,6 +22,13 @@
 #define MAX(a, b) ((a)>(b)?(a):(b))
 #define MIN(a, b) ((a)<(b)?(a):(b))
 
+#ifdef _MTCP_MEASURE_ALL_ONCE_
+    mtcp_ticks global_mtcp_ticks = {0};
+    extern uint64_t req_recv_start_tick;
+    extern uint64_t req_recv_end_tick;
+    extern int display_send;
+#endif
+
 #ifdef _MTCP_MEASURE_SERVER_OVERALL_
     extern uint64_t req_recv_tick;
     extern int display_send;
@@ -1319,6 +1326,9 @@ mtcp_recv(mctx_t mctx, int sockid, char *buf, size_t len, int flags)
 inline ssize_t
 mtcp_read(mctx_t mctx, int sockid, char *buf, size_t len)
 {
+#ifdef _MTCP_MEASURE_ALL_ONCE_
+    uint64_t read_start_tick = jl_rdtsc();
+#endif
 #ifdef _MTCP_MEASURE_MTCP_READ_2_DPDK_READ_
     uint64_t read_start_tick = jl_rdtsc();
 #endif
@@ -1329,6 +1339,13 @@ mtcp_read(mctx_t mctx, int sockid, char *buf, size_t len)
 	ssize_t ret = mtcp_recv(mctx, sockid, buf, len, 0);
     /***************************************************/
     if(ret > 0){
+#ifdef _MTCP_MEASURE_ALL_ONCE_
+        global_mtcp_ticks.dpdk_recv_start_tick = req_recv_start_tick;
+        global_mtcp_ticks.dpdk_recv_end_tick = req_recv_end_tick;
+        global_mtcp_ticks.mtcp_read_start_tick = read_start_tick;
+        global_mtcp_ticks.mtcp_read_end_tick = jl_rdtsc();
+        fprintf(stdout, "mtcp_read ret:%ld time_tick_before_dpdk_recv:%lu\n", ret, req_recv_start_tick);
+#endif
 #ifdef _MTCP_MEASURE_SERVER_OVERALL_
         fprintf(stderr, "mtcp_read ret:%ld time_tick_before_dpdk_recv:%lu\n", ret, req_recv_tick);
 #endif
@@ -1521,6 +1538,9 @@ CopyFromUser(mtcp_manager_t mtcp, tcp_stream *cur_stream, const char *buf, int l
 ssize_t
 mtcp_write(mctx_t mctx, int sockid, const char *buf, size_t len)
 {
+#ifdef _MTCP_MEASURE_ALL_ONCE_
+    uint64_t write_start_tick = jl_rdtsc();
+#endif
 #ifdef _MTCP_MEASURE_WRITE_
     uint64_t write_start_tick = jl_rdtsc();
 #endif
@@ -1630,6 +1650,11 @@ mtcp_write(mctx_t mctx, int sockid, const char *buf, size_t len)
 
 	TRACE_API("Stream %d: mtcp_write() returning %d\n", cur_stream->id, ret);
     if(ret > 0){
+#ifdef _MTCP_MEASURE_ALL_ONCE_
+        display_send = 1;
+        global_mtcp_ticks.mtcp_write_start_tick = write_start_tick;
+        global_mtcp_ticks.mtcp_write_end_tick = jl_rdtsc();
+#endif
 #ifdef _MTCP_MEASURE_SERVER_OVERALL_
         //uint64_t temp_tick = jl_rdtsc();
         //fprintf(stderr, "mtcp_write ret:%d time_tick:%lu\n", ret, temp_tick);

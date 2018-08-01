@@ -86,6 +86,13 @@
 
 #include "measure_def.h"
 
+#ifdef _MTCP_MEASURE_ALL_ONCE_
+    extern mtcp_ticks global_mtcp_ticks;
+    uint64_t req_recv_start_tick;
+    uint64_t req_recv_end_tick;
+    int display_send = 0;
+#endif
+
 #ifdef _MTCP_MEASURE_SERVER_OVERALL_
     uint64_t req_recv_tick = 0;
     int display_send = 0;
@@ -317,6 +324,9 @@ dpdk_release_pkt(struct mtcp_thread_context *ctxt, int ifidx, unsigned char *pkt
 int
 dpdk_send_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 {
+#ifdef _MTCP_MEASURE_ALL_ONCE_
+    uint64_t send_start_tick = jl_rdtsc();
+#endif
 #ifdef _MTCP_MEASURE_DPDK_SEND_
     uint64_t send_start_tick = jl_rdtsc();
 #endif
@@ -395,6 +405,20 @@ dpdk_send_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 		dpc->wmbufs[ifidx].len = 0;
 	}
     if(ret > 0){
+#ifdef _MTCP_MEASURE_ALL_ONCE_
+        global_mtcp_ticks.dpdk_send_start_tick = send_start_tick;
+        global_mtcp_ticks.dpdk_send_end_tick = jl_rdtsc();
+        if(display_send){
+            fprintf(stdout,
+                    "dpdk_recv_start:%lu dpdk_recv_end:%lu mtcp_read_start:%lu mtcp_read_end:%lu mtcp_write_start:%lu mtcp_write_end:%lu dpdk_send_start:%lu dpdk_send_end:%lu\n",
+                    global_mtcp_ticks.dpdk_recv_start_tick, global_mtcp_ticks.dpdk_recv_end_tick,
+                    global_mtcp_ticks.mtcp_read_start_tick, global_mtcp_ticks.mtcp_read_end_tick,
+                    global_mtcp_ticks.mtcp_write_start_tick, global_mtcp_ticks.mtcp_write_end_tick,
+                    global_mtcp_ticks.dpdk_send_start_tick, global_mtcp_ticks.dpdk_send_end_tick);
+            fprintf(stdout, "dpdk_send_pkts display_send:%d ret:%d time_tick:%lu\n", display_send, ret, global_mtcp_ticks.dpdk_send_end_tick);
+            display_send = 0;
+        }
+#endif
 #ifdef _MTCP_MEASURE_SERVER_OVERALL_
         uint64_t temp_tick  = jl_rdtsc();
         if(display_send){
@@ -479,6 +503,10 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 	struct dpdk_private_context *dpc;
 	int ret;
 
+#ifdef _MTCP_MEASURE_ALL_ONCE_
+    uint64_t recv_start_tick = jl_rdtsc();
+#endif
+
 #ifdef _MTCP_MEASURE_SERVER_OVERALL_
     uint64_t recv_start_tick = jl_rdtsc();
 #endif
@@ -504,6 +532,10 @@ dpdk_recv_pkts(struct mtcp_thread_context *ctxt, int ifidx)
 #endif
 	dpc->rmbufs[ifidx].len = ret;
     if(ret > 0){
+#ifdef _MTCP_MEASURE_ALL_ONCE_
+       req_recv_start_tick = recv_start_tick; 
+       req_recv_end_tick = jl_rdtsc();
+#endif
 #ifdef _MTCP_MEASURE_SERVER_OVERALL_
         req_recv_tick = recv_start_tick;
         //fprintf(stderr, "dpdk_recv_pkts display_recv:%d ret:%d time_tick:%lu\n", display_recv, ret, recv_start_tick);
