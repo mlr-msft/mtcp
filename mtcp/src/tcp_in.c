@@ -911,8 +911,8 @@ Handle_TCP_ST_ESTABLISHED (mtcp_manager_t mtcp, uint32_t cur_ts,
 		} else {
             //printf("866:Handle_TCP_ST_ESTABLISHED() will call EnqueueACK\n");
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
-            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
-            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+            //nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+            //nanosleep((const struct timespec[]){{0, 1L}}, NULL);
 		}
 	}
 	
