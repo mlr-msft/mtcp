@@ -534,6 +534,229 @@ wait:
 
 	return cnt;
 }
+
+int qd_valid(int query_qd, int *qds, int qsum){
+    // judge if the queue id is acautlly waited
+    int i;
+    for(i = 0; i < qsum; i++){
+        if (qds[i] == query_qd){
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+int
+mtcp_epoll_queue_wait(mctx_t mctx, int epid, struct mtcp_epoll_event *events, int maxevents, int timeout, int *qds, int qsum, int wait_all){
+    mtcp_manager_t mtcp;
+	struct mtcp_epoll *ep;
+	struct event_queue *eq;
+	struct event_queue *eq_shadow;
+	socket_map_t event_socket;
+	int validity;
+	int i, cnt, ret;
+	int num_events;
+
+	mtcp = GetMTCPManager(mctx);
+	if (!mtcp) {
+		return -1;
+	}
+
+	if (epid < 0 || epid >= CONFIG.max_concurrency) {
+		TRACE_API("Epoll id %d out of range.\n", epid);
+		errno = EBADF;
+		return -1;
+	}
+
+	if (mtcp->smap[epid].socktype == MTCP_SOCK_UNUSED) {
+		errno = EBADF;
+		return -1;
+	}
+
+	if (mtcp->smap[epid].socktype != MTCP_SOCK_EPOLL) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	ep = mtcp->smap[epid].ep;
+	if (!ep || !events || maxevents <= 0) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	ep->stat.calls++;
+
+#if SPIN_BEFORE_SLEEP
+	int spin = 0;
+	while (ep->num_events == 0 && spin < SPIN_THRESH) {
+		spin++;
+	}
+#endif /* SPIN_BEFORE_SLEEP */
+
+	if (pthread_mutex_lock(&ep->epoll_lock)) {
+		if (errno == EDEADLK)
+			perror("mtcp_epoll_wait: epoll_lock blocked\n");
+		assert(0);
+	}
+
+wait:
+	eq = ep->usr_queue;
+	eq_shadow = ep->usr_shadow_queue;
+
+	/* wait until event occurs */
+	while (eq->num_events == 0 && eq_shadow->num_events == 0 && timeout != 0) {
+
+#if INTR_SLEEPING_MTCP
+		/* signal to mtcp thread if it is sleeping */
+		if (mtcp->wakeup_flag && mtcp->is_sleeping) {
+			pthread_kill(mtcp->ctx->thread, SIGUSR1);
+		}
+#endif
+		ep->stat.waits++;
+		ep->waiting = TRUE;
+		if (timeout > 0) {
+			struct timespec deadline;
+
+			clock_gettime(CLOCK_REALTIME, &deadline);
+			if (timeout >= 1000) {
+				int sec;
+				sec = timeout / 1000;
+				deadline.tv_sec += sec;
+				timeout -= sec * 1000;
+			}
+
+			deadline.tv_nsec += timeout * 1000000;
+
+			if (deadline.tv_nsec >= 1000000000) {
+				deadline.tv_sec++;
+				deadline.tv_nsec -= 1000000000;
+			}
+
+			//deadline.tv_sec = mtcp->cur_tv.tv_sec;
+			//deadline.tv_nsec = (mtcp->cur_tv.tv_usec + timeout * 1000) * 1000;
+			ret = pthread_cond_timedwait(&ep->epoll_cond, 
+					&ep->epoll_lock, &deadline);
+			if (ret && ret != ETIMEDOUT) {
+				/* errno set by pthread_cond_timedwait() */
+				pthread_mutex_unlock(&ep->epoll_lock);
+				TRACE_ERROR("pthread_cond_timedwait failed. ret: %d, error: %s\n", 
+						ret, strerror(errno));
+				return -1;
+			}
+			timeout = 0;
+		} else if (timeout < 0) {
+			ret = pthread_cond_wait(&ep->epoll_cond, &ep->epoll_lock);
+			if (ret) {
+				/* errno set by pthread_cond_wait() */
+				pthread_mutex_unlock(&ep->epoll_lock);
+				TRACE_ERROR("pthread_cond_wait failed. ret: %d, error: %s\n", 
+						ret, strerror(errno));
+				return -1;
+			}
+		}
+		ep->waiting = FALSE;
+
+		if (mtcp->ctx->done || mtcp->ctx->exit || mtcp->ctx->interrupt) {
+			mtcp->ctx->interrupt = FALSE;
+			//ret = pthread_cond_signal(&ep->epoll_cond);
+			pthread_mutex_unlock(&ep->epoll_lock);
+			errno = EINTR;
+			return -1;
+		}
+	
+	}
+	
+	/* fetch events from the user event queue */
+	cnt = 0;
+	num_events = eq->num_events;
+	for (i = 0; i < num_events && cnt < maxevents; i++) {
+		event_socket = &mtcp->smap[eq->events[eq->start].sockid];
+		validity = TRUE;
+        // JINGLIU: check if wait on this queue
+        if(qd_valid(eq->events[eq->start].sockid, qds, qsum)){
+            validity = FALSE;
+        }
+		if (event_socket->socktype == MTCP_SOCK_UNUSED)
+			validity = FALSE;
+		if (!(event_socket->epoll & eq->events[eq->start].ev.events))
+			validity = FALSE;
+		if (!(event_socket->events & eq->events[eq->start].ev.events))
+			validity = FALSE;
+
+		if (validity) {
+			events[cnt++] = eq->events[eq->start].ev;
+			assert(eq->events[eq->start].sockid >= 0);
+
+			TRACE_EPOLL("Socket %d: Handled event. event: %s, "
+					"start: %u, end: %u, num: %u\n", 
+					event_socket->id, 
+					EventToString(eq->events[eq->start].ev.events), 
+					eq->start, eq->end, eq->num_events);
+			ep->stat.handled++;
+		} else {
+			TRACE_EPOLL("Socket %d: event %s invalidated.\n", 
+					eq->events[eq->start].sockid, 
+					EventToString(eq->events[eq->start].ev.events));
+			ep->stat.invalidated++;
+		}
+		event_socket->events &= (~eq->events[eq->start].ev.events);
+
+		eq->start++;
+		eq->num_events--;
+		if (eq->start >= eq->size) {
+			eq->start = 0;
+		}
+	}
+
+	/* fetch eventes from user shadow event queue */
+	eq = ep->usr_shadow_queue;
+	num_events = eq->num_events;
+	for (i = 0; i < num_events && cnt < maxevents; i++) {
+		event_socket = &mtcp->smap[eq->events[eq->start].sockid];
+		validity = TRUE;
+        // JINGLIU: check if wait on this queue
+        if(qd_valid(eq->events[eq->start].sockid, qds, qsum)){
+            validity = FALSE;
+        }
+		if (event_socket->socktype == MTCP_SOCK_UNUSED)
+			validity = FALSE;
+		if (!(event_socket->epoll & eq->events[eq->start].ev.events))
+			validity = FALSE;
+		if (!(event_socket->events & eq->events[eq->start].ev.events))
+			validity = FALSE;
+
+		if (validity) {
+			events[cnt++] = eq->events[eq->start].ev;
+			assert(eq->events[eq->start].sockid >= 0);
+
+			TRACE_EPOLL("Socket %d: Handled event. event: %s, "
+					"start: %u, end: %u, num: %u\n", 
+					event_socket->id, 
+					EventToString(eq->events[eq->start].ev.events), 
+					eq->start, eq->end, eq->num_events);
+			ep->stat.handled++;
+		} else {
+			TRACE_EPOLL("Socket %d: event %s invalidated.\n", 
+					eq->events[eq->start].sockid, 
+					EventToString(eq->events[eq->start].ev.events));
+			ep->stat.invalidated++;
+		}
+		event_socket->events &= (~eq->events[eq->start].ev.events);
+
+		eq->start++;
+		eq->num_events--;
+		if (eq->start >= eq->size) {
+			eq->start = 0;
+		}
+	}
+
+	if (cnt == 0 && timeout != 0)
+		goto wait;
+
+	pthread_mutex_unlock(&ep->epoll_lock);
+
+	return cnt;
+}
 /*----------------------------------------------------------------------------*/
 inline int 
 AddEpollEvent(struct mtcp_epoll *ep, 

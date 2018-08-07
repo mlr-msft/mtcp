@@ -17,6 +17,13 @@
 #define MAX(a, b) ((a)>(b)?(a):(b))
 #define MIN(a, b) ((a)<(b)?(a):(b))
 
+static inline uint64_t jl_rdtsc(void)
+{
+    uint64_t eax, edx;
+    __asm volatile ("rdtsc" : "=a" (eax), "=d" (edx));
+    return (edx << 32) | eax;
+}
+
 /*----------------------------------------------------------------------------*/
 static inline uint16_t
 CalculateOptionLength(uint8_t flags)
@@ -526,8 +533,10 @@ FlushTCPSendingBuffer(mtcp_manager_t mtcp, tcp_stream *cur_stream, uint32_t cur_
 							"peer_wnd: %u, (snd_nxt-snd_una): %u\n",
 							sndvar->peer_wnd, seq - sndvar->snd_una);
 #endif
-				if (!wack_sent && TS_TO_MSEC(cur_ts - sndvar->ts_lastack_sent) > 500)
+				if (!wack_sent && TS_TO_MSEC(cur_ts - sndvar->ts_lastack_sent) > 500){
+                    printf("tcp_out.c/FlushTCPSendingBuffer will Call EnqueueACK\n");
 					EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_WACK);
+                }
 				else
 					wack_sent = 1;
 			}
@@ -1044,6 +1053,8 @@ EnqueueACK(mtcp_manager_t mtcp,
 	} else if (opt == ACK_OPT_WACK) {
 		cur_stream->sndvar->is_wack = TRUE;
 	}
+    //uint64_t enq_tick = jl_rdtsc();
+    //printf("tcp_out.c/EnqueueACK(opt:%u) time_tick:%lu\n", opt, enq_tick);
 	AddtoACKList(mtcp, cur_stream);
 }
 /*----------------------------------------------------------------------------*/

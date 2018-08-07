@@ -1,5 +1,7 @@
-#include <assert.h>
 
+//#define _GNU_SOURCE
+//#include <pthread.h>
+#include <unistd.h>
 #include "tcp_util.h"
 #include "tcp_in.h"
 #include "tcp_out.h"
@@ -8,6 +10,13 @@
 #include "debug.h"
 #include "timer.h"
 #include "ip_in.h"
+#include "../../../mtcp_measure.h"
+
+#ifdef _LIBOS_MTCP_MEASURE_ONCE_
+    extern libos_mtcp_ticks global_libos_mtcp_ticks;
+    extern uint64_t req_dpdk_recv_end_tick;
+    extern uint64_t req_dpdk_recv_start_tick;
+#endif
 
 #define MAX(a, b) ((a)>(b)?(a):(b))
 #define MIN(a, b) ((a)<(b)?(a):(b))
@@ -15,6 +24,17 @@
 #define VERIFY_RX_CHECKSUM TRUE
 #define RECOVERY_AFTER_LOSS TRUE
 #define SELECTIVE_WRITE_EVENT_NOTIFY TRUE
+
+struct tcp_ring_buffer *global_rcv_buf = NULL;
+struct tcp_recv_vars *global_rcv_vars = NULL;
+
+static inline uint64_t jl_rdtsc(void)
+{
+    uint64_t eax, edx;
+    __asm volatile ("rdtsc" : "=a" (eax), "=d" (edx));
+    return (edx << 32) | eax;
+}
+
 
 /*----------------------------------------------------------------------------*/
 static inline int 
@@ -122,6 +142,7 @@ ValidateSequence(mtcp_manager_t mtcp, tcp_stream *cur_stream, uint32_t cur_ts,
 			TRACE_DBG("PAWS Detect wrong timestamp. "
 					"seq: %u, ts_val: %u, prev: %u\n", 
 					seq, ts.ts_val, cur_stream->rcvvar->ts_recent);
+            //printf("125:tcp_in.c/ValidateSequence EnqueueACK\n");
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
 			return FALSE;
 		} else {
@@ -154,14 +175,17 @@ ValidateSequence(mtcp_manager_t mtcp, tcp_stream *cur_stream, uint32_t cur_ts,
 				TRACE_DBG("Window update request. (seq: %u, rcv_wnd: %u)\n", 
 						seq, cur_stream->rcvvar->rcv_wnd);
 #endif
+                printf("158:tcp_in.c/ValidateSequence will call EnqueueACK\n");
 				EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_AGGREGATE);
 				return FALSE;
 
 			}
 
 			if (TCP_SEQ_LEQ(seq, cur_stream->rcv_nxt)) {
+                printf("165:tcp_in.c/ValidateSequence will call EnqueuACK\n");
 				EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_AGGREGATE);
 			} else {
+                printf("168:tcp_in.c/ValidateSequence will call EnqueueACK\n");
 				EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
 			}
 		} else {
@@ -550,9 +574,18 @@ ProcessTCPPayload(mtcp_manager_t mtcp, tcp_stream *cur_stream,
 	if (TCP_SEQ_GT(seq + payloadlen, cur_stream->rcv_nxt + rcvvar->rcv_wnd)) {
 		return FALSE;
 	}
+#ifdef _LIBOS_MTCP_MEASURE_ONCE_
+    global_libos_mtcp_ticks.dpdk_recv_start_tick = req_dpdk_recv_start_tick;
+    global_libos_mtcp_ticks.dpdk_recv_end_tick = req_dpdk_recv_end_tick;
+#endif
 
+#ifdef _LIBOS_MTCP_TOTAL_SERVER_LTC_
+    uint64_t tmp_tick = jl_rdtsc();
+    fprintf(stdout, "tcp_in.c/ProcessTCPPayload(start) tmp_tick:%lu\n", tmp_tick);
+#endif
 	/* allocate receive buffer if not exist */
 	if (!rcvvar->rcvbuf) {
+        //printf("@@@@@@tcp_in.c/ProcessTCPPayload will allocate rcvbuf\n");
 		rcvvar->rcvbuf = RBInit(mtcp->rbm_rcv, rcvvar->irs + 1);
 		if (!rcvvar->rcvbuf) {
 			TRACE_ERROR("Stream %d: Failed to allocate receive buffer.\n", 
@@ -563,6 +596,8 @@ ProcessTCPPayload(mtcp_manager_t mtcp, tcp_stream *cur_stream,
 
 			return ERROR;
 		}
+        global_rcv_buf = rcvvar->rcvbuf;
+        global_rcv_vars = rcvvar;
 	}
 
 	if (SBUF_LOCK(&rcvvar->read_lock)) {
@@ -572,11 +607,15 @@ ProcessTCPPayload(mtcp_manager_t mtcp, tcp_stream *cur_stream,
 	}
 
 	prev_rcv_nxt = cur_stream->rcv_nxt;
+    //uint64_t pre_put_tick = jl_rdtsc();
 	ret = RBPut(mtcp->rbm_rcv, 
 			rcvvar->rcvbuf, payload, (uint32_t)payloadlen, seq);
+    //uint64_t pos_put_tick = jl_rdtsc();
+    //printf("RBPut rcvvar:%p ret:%d pre_put_tick:%lu, pos_tick:%lu\n", rcvvar, ret, pre_put_tick, pos_put_tick);
 	if (ret < 0) {
 		TRACE_ERROR("Cannot merge payload. reason: %d\n", ret);
 	}
+    
 
 	/* discard the buffer if the state is FIN_WAIT_1 or FIN_WAIT_2, 
 	   meaning that the connection is already closed by the application */
@@ -589,7 +628,7 @@ ProcessTCPPayload(mtcp_manager_t mtcp, tcp_stream *cur_stream,
 	rcvvar->rcv_wnd = rcvvar->rcvbuf->size - rcvvar->rcvbuf->merged_len;
 
 	SBUF_UNLOCK(&rcvvar->read_lock);
-
+    
 	if (TCP_SEQ_LEQ(cur_stream->rcv_nxt, prev_rcv_nxt)) {
 		/* There are some lost packets */
 		return FALSE;
@@ -605,7 +644,6 @@ ProcessTCPPayload(mtcp_manager_t mtcp, tcp_stream *cur_stream,
 	if (cur_stream->state == TCP_ST_ESTABLISHED) {
 		RaiseReadEvent(mtcp, cur_stream);
 	}
-
 	return TRUE;
 }
 /*----------------------------------------------------------------------------*/
@@ -856,9 +894,25 @@ Handle_TCP_ST_ESTABLISHED (mtcp_manager_t mtcp, uint32_t cur_ts,
 		if (ProcessTCPPayload(mtcp, cur_stream, 
 				cur_ts, payload, seq, payloadlen)) {
 			/* if return is TRUE, send ACK */
+            //printf("863:Handle_TCP_ST_ESTABLISHED() will call EnqueueACK\n");
+            //usleep(1);
+            //usleep(1);
+            /*******/
+            // this two nanosleep() suite works well
+            //nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+            //nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+            /******/
+            //pthread_yield();
+			//EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_AGGREGATE);
+            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+            nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+         
 		} else {
+            //printf("866:Handle_TCP_ST_ESTABLISHED() will call EnqueueACK\n");
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
+            //nanosleep((const struct timespec[]){{0, 1L}}, NULL);
+            //nanosleep((const struct timespec[]){{0, 1L}}, NULL);
 		}
 	}
 	
@@ -881,6 +935,7 @@ Handle_TCP_ST_ESTABLISHED (mtcp_manager_t mtcp, uint32_t cur_ts,
 			/* notify FIN to application */
 			RaiseReadEvent(mtcp, cur_stream);
 		} else {
+            printf("890:tcp_in.c/Handle_TCP_ST_ESTABLISHED will call EnqueueACK\n");
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
 			return;
 		}
@@ -1011,8 +1066,10 @@ Handle_TCP_ST_FIN_WAIT_1 (mtcp_manager_t mtcp, uint32_t cur_ts,
 		if (ProcessTCPPayload(mtcp, cur_stream, 
 				cur_ts, payload, seq, payloadlen)) {
 			/* if return is TRUE, send ACK */
+            printf("1021: will call EnqueueACK\n");
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_AGGREGATE);
 		} else {
+            printf("1024: will call EnqueueACK\n");
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
 		}
 	}
@@ -1057,8 +1114,10 @@ Handle_TCP_ST_FIN_WAIT_2 (mtcp_manager_t mtcp, uint32_t cur_ts,
 		if (ProcessTCPPayload(mtcp, cur_stream, 
 				cur_ts, payload, seq, payloadlen)) {
 			/* if return is TRUE, send ACK */
+            printf("1069: will call EnqueuACK\n");
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_AGGREGATE);
 		} else {
+            printf("1072: will call EnqueuACK\n");
 			EnqueueACK(mtcp, cur_stream, cur_ts, ACK_OPT_NOW);
 		}
 	}
@@ -1247,6 +1306,7 @@ ProcessTCPPacket(mtcp_manager_t mtcp,
 		else {
 			Handle_TCP_ST_SYN_RCVD(mtcp, cur_ts, cur_stream, tcph, ack_seq);
 			if (payloadlen > 0 && cur_stream->state == TCP_ST_ESTABLISHED) {
+                printf("tcp_in.c/TCP_ST_SYN_RCVD\n");
 				Handle_TCP_ST_ESTABLISHED(mtcp, cur_ts, cur_stream, tcph,
 							  seq, ack_seq, payload,
 							  payloadlen, window);
@@ -1255,6 +1315,7 @@ ProcessTCPPacket(mtcp_manager_t mtcp,
 		break;
 
 	case TCP_ST_ESTABLISHED:
+        //printf("tcp_in.c/TP_ST_ESTABLISHED\n");
 		Handle_TCP_ST_ESTABLISHED(mtcp, cur_ts, cur_stream, tcph, 
 				seq, ack_seq, payload, payloadlen, window);
 		break;

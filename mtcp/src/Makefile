@@ -3,19 +3,19 @@
 .PHONY: clean
 
 ### TARGET ###
-PS=@PSIO@
-DPDK=@DPDK@
-NETMAP=@NETMAP@
-ONVM=@ONVM@
-LRO=@LRO@
-HWCSUM=@HWCSUM@
+PS=0
+DPDK=1
+NETMAP=0
+ONVM=0
+LRO=0
+HWCSUM=1
 MTCP_LIB_DIR=../lib
 MTCP_LIB=libmtcp.a
 MTCP_HDR_DIR=../include
 MTCP_HDR = mtcp_api.h mtcp_epoll.h uthash.h
 
 ### GCC ###
-GCC=@CC@
+GCC=gcc
 
 ### FLAGS ###
 ifeq ($(shell uname -m),x86_64)
@@ -33,7 +33,7 @@ GCC_OPT += -DNDEBUG -g -O3 -DNETSTAT -DINFO -DDBGERR -DDBGCERR
 #GCC_OPT += -DNDEBUG -g -DNETSTAT -DINFO -DDBGERR -DDBGCERR
 GCC_OPT += $(DBG_OPT)
 
-CFLAGS=@CFLAGS@
+CFLAGS=-g -O2
 
 ifeq ($(LRO),1)
 GCC_OPT += -DENABLELRO
@@ -63,9 +63,9 @@ ifeq ($(ONVM),1)
 ifeq ($(RTE_TARGET),)
 $(error "Please define RTE_SDK environment variable")
 endif
-INC += -I@ONVMLIBPATH@/onvm_nflib
+INC += -I/onvm_nflib
 INC += -DENABLE_ONVM
-LDFLAGS += @ONVMLIBPATH@/onvm_nflib/$(RTE_TARGET)/libonvm.a
+LDFLAGS += /onvm_nflib/$(RTE_TARGET)/libonvm.a
 endif
 
 
@@ -74,11 +74,11 @@ PS_DIR=../../io_engine
 INC += -I$(PS_DIR)/include
 
 # DPDK LIBRARY and HEADER
-DPDK_INC=@DPDKLIBPATH@/include
-DPDK_LIB=@DPDKLIBPATH@/lib/
+DPDK_INC=/users/jingliu/mtcp/dpdk/include
+DPDK_LIB=/users/jingliu/mtcp/dpdk/lib/
 # CFLAGS for DPDK-related compilation
 ifeq ($(DPDK), 1)
-DPDK_MACHINE_FLAGS = $(shell cat @DPDKLIBPATH@/include/cflags.txt)
+DPDK_MACHINE_FLAGS = $(shell cat /users/jingliu/mtcp/dpdk/include/cflags.txt)
 INC += ${DPDK_MACHINE_FLAGS} -I${DPDK_INC} -include $(DPDK_INC)/rte_config.h
 else
 INC += -DDISABLE_DPDK

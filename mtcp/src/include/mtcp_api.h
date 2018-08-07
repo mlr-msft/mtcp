@@ -13,11 +13,13 @@
 #define INPORT_ANY	(uint16_t)0
 #endif
 
-
+/*******************************************/
+/*******************************************/
+/*******************************************/
 /*******************************************/
 // LIBOS
 //
-//#define LIBOS_MTCP_DEBUG 7
+#define LIBOS_MTCP_DEBUG 7
 //
 
 #ifndef C_MAX_QUEUE_DEPTH
@@ -32,6 +34,10 @@
 #define C_ZEUS_IO_ERR_NO (-9)
 #endif
 
+// defined in dpdk
+#define MTCP_RCVBUF_SIZE (2*1024)
+#define MTCP_SNDBUF_SIZE (8*1024)
+
 
 // NOTE: duplication as io-queue_c.h
 // TODO: split all the DS into single h file
@@ -45,8 +51,13 @@ typedef struct Sgarray{
     zeus_sgelem bufs[C_MAX_SGARRAY_SIZE];
 }zeus_sgarray;
 
-/*******************************************/
 
+
+/*******************************************/
+/*******************************************/
+/*******************************************/
+/*******************************************/
+/*******************************************/
 
 #ifdef __cplusplus
 extern "C" {
@@ -176,6 +187,7 @@ mtcp_write(mctx_t mctx, int sockid, const char *buf, size_t len);
 int
 mtcp_writev(mctx_t mctx, int sockid, const struct iovec *iov, int numIOV);
 
+int mtcp_test(int num);
 
 /******************************************************************************/
 // libos_mtcp c interface
@@ -183,7 +195,7 @@ mtcp_writev(mctx_t mctx, int sockid, const struct iovec *iov, int numIOV);
 
 // typedef int qtoken
 
-int libos_mtcp_init(const char * config_file, void *app_start_rountine);
+int libos_mtcp_init(const char * config_file);
 
 // network functions
 int libos_mtcp_queue(int domain, int type, int protocol);
@@ -195,9 +207,9 @@ int libos_mtcp_close(int qd);
 // other functions
 int libos_mtcp_push(int qd, zeus_sgarray *sga);
 int libos_mtcp_pop(int qd, zeus_sgarray *sga);
-ssize_t libos_mtcp_wait(int qd, zeus_sgarray *sga)
-ssize_t libos_mtcp_wait_any(int *qts, zeus_sgarray *sga);
-ssize_t libos_mtcp_wait_all(int *qts, zeus_sgarray *sga);
+ssize_t libos_mtcp_wait(int qd, zeus_sgarray *sga);
+ssize_t libos_mtcp_wait_any(int *qts,int qsum, zeus_sgarray *sga);
+ssize_t libos_mtcp_wait_all(int *qts, int qsum, zeus_sgarray *sga);
 ssize_t libos_mtcp_blocking_push(int qd, zeus_sgarray *sga);
 ssize_t libos_mtcp_blocking_pop(int qd, zeus_sgarray *sga);
 

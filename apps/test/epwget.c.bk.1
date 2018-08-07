@@ -1,0 +1,435 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <time.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/queue.h>
+#include <assert.h>
+#include <limits.h>
+
+#include <mtcp_api.h>
+#include <mtcp_epoll.h>
+#include "cpu.h"
+#include "rss.h"
+#include "http_parsing.h"
+#include "netlib.h"
+#include "debug.h"
+
+#define MAX_URL_LEN 128
+#define MAX_FILE_LEN 128
+#define HTTP_HEADER_LEN 1024
+
+#define IP_RANGE 1
+#define MAX_IP_STR_LEN 16
+
+#define BUF_SIZE (8*1024)
+
+#define CALC_MD5SUM FALSE
+
+#define TIMEVAL_TO_MSEC(t)		((t.tv_sec * 1000) + (t.tv_usec / 1000))
+#define TIMEVAL_TO_USEC(t)		((t.tv_sec * 1000000) + (t.tv_usec))
+#define TS_GT(a,b)				((int64_t)((a)-(b)) > 0)
+
+#ifndef TRUE
+#define TRUE (1)
+#endif
+
+#ifndef FALSE
+#define FALSE (0)
+#endif
+
+#ifndef ERROR
+#define ERROR (-1)
+#endif
+
+#ifndef MAX_CPUS
+#define MAX_CPUS		16
+#endif
+/*----------------------------------------------------------------------------*/
+//static pthread_t app_thread[MAX_CPUS];
+static mctx_t g_mctx[MAX_CPUS];
+static int done[MAX_CPUS];
+/*----------------------------------------------------------------------------*/
+static int num_cores;
+static int core_limit;
+/*----------------------------------------------------------------------------*/
+static int fio = FALSE;
+static char outfile[MAX_FILE_LEN + 1];
+/*----------------------------------------------------------------------------*/
+static char host[MAX_IP_STR_LEN + 1] = {'\0'};
+static char url[MAX_URL_LEN + 1] = {'\0'};
+static in_addr_t daddr;
+static in_port_t dport;
+static in_addr_t saddr;
+/*----------------------------------------------------------------------------*/
+static int total_flows;
+//static int flows[MAX_CPUS];
+//static int flowcnt = 0;
+static int concurrency;
+static int max_fds;
+//static int response_size = 0;
+/*----------------------------------------------------------------------------*/
+struct wget_stat
+{
+	uint64_t waits;
+	uint64_t events;
+	uint64_t connects;
+	uint64_t reads;
+	uint64_t writes;
+	uint64_t completes;
+
+	uint64_t errors;
+	uint64_t timedout;
+
+	uint64_t sum_resp_time;
+	uint64_t max_resp_time;
+};
+/*----------------------------------------------------------------------------*/
+struct thread_context
+{
+	int core;
+
+	mctx_t mctx;
+	int ep;
+	struct wget_vars *wvars;
+
+	int target;
+	int started;
+	int errors;
+	int incompletes;
+	int done;
+	int pending;
+
+	struct wget_stat stat;
+};
+typedef struct thread_context* thread_context_t;
+/*----------------------------------------------------------------------------*/
+struct wget_vars
+{
+	int request_sent;
+
+	char response[HTTP_HEADER_LEN];
+	int resp_len;
+	int headerset;
+	uint32_t header_len;
+	uint64_t file_len;
+	uint64_t recv;
+	uint64_t write;
+
+	struct timeval t_start;
+	struct timeval t_end;
+	
+	int fd;
+};
+/*----------------------------------------------------------------------------*/
+//static struct thread_context *g_ctx[MAX_CPUS] = {0};
+static struct wget_stat *g_stat[MAX_CPUS] = {0};
+/*----------------------------------------------------------------------------*/
+thread_context_t 
+CreateContext(int core)
+{
+	thread_context_t ctx;
+
+	ctx = (thread_context_t)calloc(1, sizeof(struct thread_context));
+	if (!ctx) {
+		perror("malloc");
+		TRACE_ERROR("Failed to allocate memory for thread context.\n");
+		return NULL;
+	}
+	ctx->core = core;
+
+    printf("@@@@@@ before_mtcp_create_context");
+	ctx->mctx = mtcp_create_context(core);
+	if (!ctx->mctx) {
+		TRACE_ERROR("Failed to create mtcp context.\n");
+		free(ctx);
+		return NULL;
+	}
+	g_mctx[core] = ctx->mctx;
+
+	return ctx;
+}
+/*----------------------------------------------------------------------------*/
+void 
+DestroyContext(thread_context_t ctx) 
+{
+	g_stat[ctx->core] = NULL;
+	mtcp_destroy_context(ctx->mctx);
+	free(ctx);
+}
+/*----------------------------------------------------------------------------*/
+static inline int 
+CreateConnection(thread_context_t ctx)
+{
+	mctx_t mctx = ctx->mctx;
+	struct mtcp_epoll_event ev;
+	struct sockaddr_in addr;
+	int sockid;
+	int ret;
+
+    printf("@@@@@@ mtcp_socket\n");
+	sockid = mtcp_socket(mctx, AF_INET, SOCK_STREAM, 0);
+	if (sockid < 0) {
+		TRACE_INFO("Failed to create socket!\n");
+		return -1;
+	}
+	//memset(&ctx->wvars[sockid], 0, sizeof(struct wget_vars));
+    printf("@@@@@@ mtcp_set_socketno_block\n");
+    /**
+	ret = mtcp_setsock_nonblock(mctx, sockid);
+	if (ret < 0) {
+		TRACE_ERROR("Failed to set socket in nonblocking mode.\n");
+		exit(-1);
+	}**/
+
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = daddr;
+	addr.sin_port = dport;
+	
+    printf("@@@@@@ mtcp_connect sockid:%d\n", sockid);
+	ret = mtcp_connect(mctx, sockid, 
+			(struct sockaddr *)&addr, sizeof(struct sockaddr_in));
+    printf("@@@@@@ mtcp_connect return:%d\n", ret);
+	if (ret < 0) {
+        printf("@@@@@@ errno:%d\n", errno);
+		if (errno != EINPROGRESS) {
+			perror("mtcp_connect");
+			mtcp_close(mctx, sockid);
+			return -1;
+		}else{
+            printf("EINPROGRESS is %d\n", EINPROGRESS);
+        }
+    }
+
+	ctx->started++;
+	ctx->pending++;
+	ctx->stat.connects++;
+
+	ev.events = MTCP_EPOLLOUT;
+	ev.data.sockid = sockid;
+	mtcp_epoll_ctl(mctx, ctx->ep, MTCP_EPOLL_CTL_ADD, sockid, &ev);
+
+	return sockid;
+}
+/*----------------------------------------------------------------------------*/
+static inline void 
+CloseConnection(thread_context_t ctx, int sockid)
+{
+	mtcp_epoll_ctl(ctx->mctx, ctx->ep, MTCP_EPOLL_CTL_DEL, sockid, NULL);
+	mtcp_close(ctx->mctx, sockid);
+	ctx->pending--;
+	ctx->done++;
+	assert(ctx->pending >= 0);
+	while (ctx->pending < concurrency && ctx->started < ctx->target) {
+		if (CreateConnection(ctx) < 0) {
+			done[ctx->core] = TRUE;
+			break;
+		}
+	}
+}
+/*----------------------------------------------------------------------------*/
+
+/*----------------------------------------------------------------------------*/
+
+/*----------------------------------------------------------------------------*/
+
+/*----------------------------------------------------------------------------*/
+
+/*----------------------------------------------------------------------------*/
+
+/*----------------------------------------------------------------------------*/
+
+/*----------------------------------------------------------------------------*/
+void 
+SignalHandler(int signum)
+{
+	int i;
+
+	for (i = 0; i < core_limit; i++) {
+		done[i] = TRUE;
+	}
+}
+/*----------------------------------------------------------------------------*/
+int 
+main(int argc, char **argv)
+{
+	struct mtcp_conf mcfg;
+	char *conf_file;
+	//int cores[MAX_CPUS];
+	//int flow_per_thread;
+	//int flow_remainder_cnt;
+	int total_concurrency = 0;
+	int ret;
+    int o;
+	//int i, o;
+	int process_cpu;
+
+	if (argc < 3) {
+		TRACE_CONFIG("Too few arguments!\n");
+		TRACE_CONFIG("Usage: %s url #flows [output]\n", argv[0]);
+		return FALSE;
+	}
+
+	if (strlen(argv[1]) > MAX_URL_LEN) {
+		TRACE_CONFIG("Length of URL should be smaller than %d!\n", MAX_URL_LEN);
+		return FALSE;
+	}
+
+	char* slash_p = strchr(argv[1], '/');
+	if (slash_p) {
+		strncpy(host, argv[1], slash_p - argv[1]);
+		strncpy(url, strchr(argv[1], '/'), MAX_URL_LEN);
+	} else {
+		strncpy(host, argv[1], MAX_IP_STR_LEN);
+		strncpy(url, "/", 2);
+	}
+
+	conf_file = NULL;
+	process_cpu = -1;
+	daddr = inet_addr(host);
+	dport = htons(10001);
+	saddr = INADDR_ANY;
+
+	total_flows = mystrtol(argv[2], 10);
+	if (total_flows <= 0) {
+		TRACE_CONFIG("Number of flows should be large than 0.\n");
+		return FALSE;
+	}
+
+	num_cores = GetNumCPUs();
+	core_limit = num_cores;
+	concurrency = 100;
+
+	while (-1 != (o = getopt(argc, argv, "N:c:o:n:f:"))) {
+		switch(o) {
+		case 'N':
+			core_limit = mystrtol(optarg, 10);
+			if (core_limit > num_cores) {
+				TRACE_CONFIG("CPU limit should be smaller than the "
+					     "number of CPUS: %d\n", num_cores);
+				return FALSE;
+			} else if (core_limit < 1) {
+				TRACE_CONFIG("CPU limit should be greater than 0\n");
+				return FALSE;
+			}
+			/** 
+			 * it is important that core limit is set 
+			 * before mtcp_init() is called. You can
+			 * not set core_limit after mtcp_init()
+			 */
+			mtcp_getconf(&mcfg);
+			mcfg.num_cores = core_limit;
+			mtcp_setconf(&mcfg);
+			break;
+		case 'c':
+			total_concurrency = mystrtol(optarg, 10);
+			break;
+		case 'o':
+			if (strlen(optarg) > MAX_FILE_LEN) {
+				TRACE_CONFIG("Output file length should be smaller than %d!\n", 
+					     MAX_FILE_LEN);
+				return FALSE;
+			}
+			fio = TRUE;
+			strncpy(outfile, optarg, MAX_FILE_LEN);
+			break;
+		case 'n':
+			process_cpu = mystrtol(optarg, 10);
+			if (process_cpu > core_limit) {
+				TRACE_CONFIG("Starting CPU is way off limits!\n");
+				return FALSE;
+			}
+			break;
+		case 'f':
+			conf_file = optarg;
+			break;
+		}
+	}
+
+	if (total_flows < core_limit) {
+		core_limit = total_flows;
+	}
+
+	/* per-core concurrency = total_concurrency / # cores */
+	if (total_concurrency > 0)
+		concurrency = total_concurrency / core_limit;
+
+	/* set the max number of fds 3x larger than concurrency */
+	max_fds = concurrency * 3;
+
+	TRACE_CONFIG("Application configuration:\n");
+	TRACE_CONFIG("URL: %s\n", url);
+	TRACE_CONFIG("# of total_flows: %d\n", total_flows);
+	TRACE_CONFIG("# of cores: %d\n", core_limit);
+	TRACE_CONFIG("Concurrency: %d\n", total_concurrency);
+	if (fio) {
+		TRACE_CONFIG("Output file: %s\n", outfile);
+	}
+
+	if (conf_file == NULL) {
+		TRACE_ERROR("mTCP configuration file is not set!\n");
+		exit(EXIT_FAILURE);
+	}
+	
+	ret = mtcp_init(conf_file);
+	if (ret) {
+		TRACE_ERROR("Failed to initialize mtcp.\n");
+		exit(EXIT_FAILURE);
+	}
+	mtcp_getconf(&mcfg);
+	mcfg.max_concurrency = max_fds;
+	mcfg.max_num_buffers = max_fds;
+	mtcp_setconf(&mcfg);
+
+	mtcp_register_signal(SIGINT, SignalHandler);
+
+    int core = 0;
+
+	thread_context_t ctx;
+	mctx_t mctx;
+	//struct in_addr daddr_in;
+    int wr;
+	//int ep;
+    int sockid;
+	//struct mtcp_epoll_event *events;
+
+
+	mtcp_core_affinitize(core);
+    ctx = CreateContext(core);
+    printf("@@@@@@ after CreateContext\n");
+    if (!ctx){
+        fprintf(stderr, "Cannot create context\n");
+        return -1;
+    }
+	mctx = ctx->mctx;
+	mtcp_init_rss(mctx, saddr, IP_RANGE, daddr, dport);
+	//daddr_in.s_addr = daddr;
+    printf("@@@@@@ before CreateConnection\n");
+    ret = CreateConnection(ctx);
+    printf("@@@@@@ after CreateConnection ret:%d\n", ret);
+    if (ret < 0) {
+        fprintf(stderr, "Cannot CreateConnection\n");
+        return -1;
+    }
+    sockid = ret;
+    char *buf = "TEST TCP SEDN";
+    // do send
+    printf("@@@@@@ before mtcp_write\n");
+    wr = mtcp_write(ctx->mctx, sockid, buf, strlen(buf));
+    printf("Send Success, wr:%d\n", wr);
+    CloseConnection(ctx, sockid);
+
+	mtcp_destroy();
+	return 0;
+}
+/*----------------------------------------------------------------------------*/

@@ -58,6 +58,15 @@
 
 #define GBPS(bytes) (bytes * 8.0 / (1000 * 1000 * 1000))
 
+int jl_debug_display_core = -1;
+//unsigned long long jl_loop_counter = 0;
+
+static inline uint64_t jl_rdtsc(void)
+{
+    uint64_t eax, edx;
+    __asm volatile ("rdtsc" : "=a" (eax), "=d" (edx));
+    return (edx << 32) | eax;
+}
 
 /*----------------------------------------------------------------------------*/
 /* handlers for threads */
@@ -496,6 +505,7 @@ HandleApplicationCalls(mtcp_manager_t mtcp, uint32_t cur_ts)
 	/* ack queue handling */
 	while ((stream = StreamDequeue(mtcp->ackq))) {
 		stream->sndvar->on_ackq = FALSE;
+        printf("core.c/HandleApplicationCalls will EnqueueACK\n");
 		EnqueueACK(mtcp, stream, cur_ts, ACK_OPT_AGGREGATE);
 	}
 
@@ -671,21 +681,35 @@ WritePacketsToChunks(mtcp_manager_t mtcp, uint32_t cur_ts)
 	/* Set the threshold to CONFIG.max_concurrency to send ACK immediately */
 	/* Otherwise, set to appropriate value (e.g. thresh) */
 	assert(mtcp->g_sender != NULL);
-	if (mtcp->g_sender->control_list_cnt)
+	if (mtcp->g_sender->control_list_cnt){
+        printf("core.c/WriteTCPControlList\n");
 		WriteTCPControlList(mtcp, mtcp->g_sender, cur_ts, thresh);
-	if (mtcp->g_sender->ack_list_cnt)
+    }
+	if (mtcp->g_sender->ack_list_cnt){
+        uint64_t wack_tick = jl_rdtsc();
+        printf("core.c/WriteTCPACKList time_tick:%lu\n", wack_tick);
 		WriteTCPACKList(mtcp, mtcp->g_sender, cur_ts, thresh);
-	if (mtcp->g_sender->send_list_cnt)
+    }
+	if (mtcp->g_sender->send_list_cnt){
+        printf("core.c/WriteTCPDataList\n");
 		WriteTCPDataList(mtcp, mtcp->g_sender, cur_ts, thresh);
+    }
 
 	for (i = 0; i < CONFIG.eths_num; i++) {
 		assert(mtcp->n_sender[i] != NULL);
-		if (mtcp->n_sender[i]->control_list_cnt)
+		if (mtcp->n_sender[i]->control_list_cnt){
+            //printf("core.c/WriteTCPControlList i:%d\n", i);
 			WriteTCPControlList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
-		if (mtcp->n_sender[i]->ack_list_cnt)
+        }
+		if (mtcp->n_sender[i]->ack_list_cnt){
+            //uint64_t wack_tick = jl_rdtsc();
+            //printf("core.c/WriteTCPACKList i:%d time_tick:%lu\n", i, wack_tick);
 			WriteTCPACKList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
-		if (mtcp->n_sender[i]->send_list_cnt)
+        }
+		if (mtcp->n_sender[i]->send_list_cnt){
+            //printf("core.c WriteTCPDataList i:%d\n", i);
 			WriteTCPDataList(mtcp, mtcp->n_sender[i], cur_ts, thresh);
+        }
 	}
 }
 /*----------------------------------------------------------------------------*/
@@ -763,13 +787,15 @@ RunMainLoop(struct mtcp_thread_context *ctx)
 
 	ts = ts_prev = 0;
 	while ((!ctx->done || mtcp->flow_cnt) && !ctx->exit) {
-		
+        //jl_loop_counter++;
 		STAT_COUNT(mtcp->runstat.rounds);
 		recv_cnt = 0;
 			
 		gettimeofday(&cur_ts, NULL);
 		ts = TIMEVAL_TO_TS(&cur_ts);
 		mtcp->cur_ts = ts;
+
+        uint64_t time_tick_while = jl_rdtsc();
 
 		for (rx_inf = 0; rx_inf < CONFIG.eths_num; rx_inf++) {
 
@@ -780,8 +806,11 @@ RunMainLoop(struct mtcp_thread_context *ctx)
 				uint16_t len;
 				uint8_t *pktbuf;
 				pktbuf = mtcp->iom->get_rptr(mtcp->ctx, rx_inf, i, &len);
-				if (pktbuf != NULL)
+				if (pktbuf != NULL){
+                    //uint64_t tmp_tick = jl_rdtsc();
+                    //printf("RunMainLoop-i:%d tmp_tick:%lu\n", i, tmp_tick);
 					ProcessPacket(mtcp, rx_inf, ts, pktbuf, len);
+                }
 #ifdef NETSTAT
 				else
 					mtcp->nstat.rx_errors[rx_inf]++;
@@ -817,25 +846,27 @@ RunMainLoop(struct mtcp_thread_context *ctx)
 				CheckConnectionTimeout(mtcp, ts, thresh);
 			}
 		}
-
+        uint64_t time_tick_0 = jl_rdtsc();
 		/* if epoll is in use, flush all the queued events */
 		if (mtcp->ep) {
 			FlushEpollEvents(mtcp, ts);
 		}
 
+        uint64_t time_tick_1 = jl_rdtsc();
 		if (mtcp->flow_cnt > 0) {
 			/* hadnle stream queues  */
 			HandleApplicationCalls(mtcp, ts);
 		}
-
+        uint64_t time_tick_2 = jl_rdtsc();
 		WritePacketsToChunks(mtcp, ts);
+        uint64_t time_tick_3 = jl_rdtsc();
 
 		/* send packets from write buffer */
 		/* send until tx is available */
 		for (tx_inf = 0; tx_inf < CONFIG.eths_num; tx_inf++) {
 			mtcp->iom->send_pkts(ctx, tx_inf);
 		}
-
+        uint64_t time_tick_4 = jl_rdtsc();
 		if (ts != ts_prev) {
 			ts_prev = ts;
 			if (ctx->cpu == mtcp_master) {
@@ -847,7 +878,17 @@ RunMainLoop(struct mtcp_thread_context *ctx)
 		}
 
 		mtcp->iom->select(ctx);
-
+        if(jl_debug_display_core > 0){
+            UNUSED(time_tick_0);
+            UNUSED(time_tick_while);
+            UNUSED(time_tick_1);
+            UNUSED(time_tick_2);
+            UNUSED(time_tick_3);
+            UNUSED(time_tick_4);
+            //printf("while-start:%lu - %lu %lu %lu %lu %lu\n", time_tick_while, time_tick_0, time_tick_1, time_tick_2, time_tick_3, time_tick_4);
+            //printf("loop-counter:%llu\n", jl_loop_counter);
+            jl_debug_display_core = -1;
+        }
 		if (ctx->interrupt) {
 			InterruptApplication(mtcp);
 		}
@@ -1523,10 +1564,14 @@ mtcp_init(const char *config_file)
 	LoadARPTable();
 	PrintARPTable();
 
+    // JL:The SIGUSR1 and SIGUSR2 signals are set aside for you to use any way you want.
+    // They’re useful for simple interprocess communication,
+    // if you write a signal handler for them in the program that receives the signal.
 	if (signal(SIGUSR1, HandleSignal) == SIG_ERR) {
 		perror("signal, SIGUSR1");
 		return -1;
 	}
+    // JL: SIGINT and SIGQUIT are intended specifically for requests from the terminal
 	if (signal(SIGINT, HandleSignal) == SIG_ERR) {
 		perror("signal, SIGINT");
 		return -1;
