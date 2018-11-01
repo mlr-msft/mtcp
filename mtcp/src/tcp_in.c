@@ -10,7 +10,8 @@
 #include "debug.h"
 #include "timer.h"
 #include "ip_in.h"
-#include "../../../mtcp_measure.h"
+
+#include <libos/libmtcp/mtcp_measure.h>
 
 #ifdef _LIBOS_MTCP_MEASURE_ONCE_
     extern libos_mtcp_ticks global_libos_mtcp_ticks;

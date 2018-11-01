@@ -96,7 +96,7 @@ am__CONFIG_DISTCLEAN_FILES = config.status config.cache config.log \
  configure.lineno config.status.lineno
 mkinstalldirs = $(install_sh) -d
 CONFIG_HEADER = config.h
-CONFIG_CLEAN_FILES = mtcp/src/Makefile apps/example/Makefile apps/test/Makefile \
+CONFIG_CLEAN_FILES = mtcp/src/Makefile apps/example/Makefile \
 	util/Makefile io_engine/lib/Makefile
 CONFIG_CLEAN_VPATH_FILES =
 AM_V_P = $(am__v_P_@AM_V@)
@@ -158,7 +158,6 @@ CSCOPE = cscope
 DIST_SUBDIRS = $(SUBDIRS)
 am__DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/config.h.in \
 	$(top_srcdir)/apps/example/Makefile.in \
-	$(top_srcdir)/apps/test/Makefile.in \
 	$(top_srcdir)/io_engine/lib/Makefile.in \
 	$(top_srcdir)/mtcp/src/Makefile.in \
 	$(top_srcdir)/util/Makefile.in README compile config.guess \
@@ -304,7 +303,7 @@ top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
 AUTOMAKE_OPTIONS = foreign
-SUBDIRS = mtcp/src util io_engine/lib apps/example apps/test
+SUBDIRS = mtcp/src util io_engine/lib apps/example
 all: config.h
 	$(MAKE) $(AM_MAKEFLAGS) all-recursive
 
@@ -360,8 +359,6 @@ distclean-hdr:
 mtcp/src/Makefile: $(top_builddir)/config.status $(top_srcdir)/mtcp/src/Makefile.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
 apps/example/Makefile: $(top_builddir)/config.status $(top_srcdir)/apps/example/Makefile.in
-	cd $(top_builddir) && $(SHELL) ./config.status $@
-apps/test/Makefile: $(top_builddir)/config.status $(top_srcdir)/apps/test/Makefile.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@
 util/Makefile: $(top_builddir)/config.status $(top_srcdir)/util/Makefile.in
 	cd $(top_builddir) && $(SHELL) ./config.status $@

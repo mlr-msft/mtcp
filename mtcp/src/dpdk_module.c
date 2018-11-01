@@ -33,8 +33,7 @@
 #include <rte_ip_frag.h>
 #endif
 
-#include "../../../mtcp_measure.h"
-
+#include <libos/libmtcp/mtcp_measure.h>
 
 #ifdef _LIBOS_MTCP_MEASURE_ONCE_
     libos_mtcp_ticks global_libos_mtcp_ticks = {0};
